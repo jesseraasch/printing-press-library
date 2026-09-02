@@ -84,14 +84,11 @@ func makeAPIHandler(method, pathTemplate string, positionalParams []string) serv
 		case "GET":
 			data, err = c.Get(path, params)
 		case "POST":
-			body, _ := json.Marshal(args)
-			data, _, err = c.Post(path, body)
+			data, _, err = c.Post(path, codeOrchWriteBody(args))
 		case "PUT":
-			body, _ := json.Marshal(args)
-			data, _, err = c.Put(path, body)
+			data, _, err = c.Put(path, codeOrchWriteBody(args))
 		case "PATCH":
-			body, _ := json.Marshal(args)
-			data, _, err = c.Patch(path, body)
+			data, _, err = c.Patch(path, codeOrchWriteBody(args))
 		case "DELETE":
 			data, _, err = c.Delete(path)
 		default:
