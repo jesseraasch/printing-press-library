@@ -39,7 +39,6 @@ func TestSchedulePickupBindsPreflightAndPersistsLedger(t *testing.T) {
 	RegisterTools(s)
 	tool := s.ListTools()["schedule_pickup"]
 	request := validMCPSchedulePickupRequest()
-	address := request["originDetail"].(map[string]any)["pickupLocation"].(map[string]any)["address"]
 	availability := map[string]any{
 		"associatedAccountNumber": "123456789",
 		"carriers":                []any{"FDXG"},
@@ -48,7 +47,7 @@ func TestSchedulePickupBindsPreflightAndPersistsLedger(t *testing.T) {
 		"dispatchDate":            "2026-09-03",
 		"packageReadyTime":        "09:00:00",
 		"customerCloseTime":       "17:00:00",
-		"pickupAddress":           address,
+		"pickupAddress":           map[string]any{"postalCode": "00000", "countryCode": "US"},
 	}
 	preview, err := tool.Handler(context.Background(), toolRequest(map[string]any{"request": request, "availability_request": availability}))
 	if err != nil || preview == nil || preview.IsError {
@@ -101,7 +100,6 @@ func TestSchedulePickupRejectsMalformedAvailabilityBeforeHTTP(t *testing.T) {
 	s := server.NewMCPServer("fedex-test", "test")
 	RegisterTools(s)
 	request := validMCPSchedulePickupRequest()
-	address := request["originDetail"].(map[string]any)["pickupLocation"].(map[string]any)["address"]
 	availability := map[string]any{
 		"associatedAccountNumber": "123456789",
 		"carriers":                []any{"FDXG"},
@@ -110,8 +108,8 @@ func TestSchedulePickupRejectsMalformedAvailabilityBeforeHTTP(t *testing.T) {
 		"dispatchDate":            "2026-09-03",
 		"packageReadyTime":        "09:00:00",
 		"customerCloseTime":       "17:00:00",
-		"pickupAddress":           address,
-		"shipmentAttributes":      map[string]any{},
+		"pickupAddress":           map[string]any{"postalCode": "00000", "countryCode": "US"},
+		"shipmentAttributes":      map[string]any{"serviceType": "FEDEX_GROUND", "packagingType": "YOUR_PACKAGING"},
 	}
 	result, err := s.ListTools()["schedule_pickup"].Handler(context.Background(), toolRequest(map[string]any{"request": request, "availability_request": availability}))
 	if err != nil {

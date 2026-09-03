@@ -78,10 +78,20 @@ func ValidatePickupAvailabilityBinding(scheduleRequest, availabilityRequest map[
 	if !ok {
 		return fmt.Errorf("originDetail.pickupLocation.address is required")
 	}
-	left, _ := json.Marshal(availabilityAddress)
-	right, _ := json.Marshal(pickupAddress)
-	if !bytes.Equal(left, right) {
-		return fmt.Errorf("availability pickupAddress must match originDetail.pickupLocation.address")
+	for _, field := range []string{"postalCode", "countryCode", "streetLines", "urbanizationCode", "city", "stateOrProvinceCode", "residential", "addressClassification"} {
+		availabilityValue, supplied := availabilityAddress[field]
+		if !supplied {
+			continue
+		}
+		pickupValue, present := pickupAddress[field]
+		if !present {
+			return fmt.Errorf("availability pickupAddress.%s must match originDetail.pickupLocation.address.%s", field, field)
+		}
+		left, _ := json.Marshal(availabilityValue)
+		right, _ := json.Marshal(pickupValue)
+		if !bytes.Equal(left, right) {
+			return fmt.Errorf("availability pickupAddress.%s must match originDetail.pickupLocation.address.%s", field, field)
+		}
 	}
 	return nil
 }

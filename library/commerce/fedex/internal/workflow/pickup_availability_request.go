@@ -117,6 +117,11 @@ func ValidatePickupAvailabilityRequest(request map[string]any) error {
 		if err := availabilityOptionalNonblank(attributes, "packagingType"); err != nil {
 			return fmt.Errorf("shipmentAttributes: %w", err)
 		}
+		if packagingType, present := attributes["packagingType"]; present && strings.TrimSpace(packagingType.(string)) == "YOUR_PACKAGING" {
+			if _, present := attributes["dimensions"]; !present {
+				return fmt.Errorf("shipmentAttributes.dimensions is required when packagingType is YOUR_PACKAGING")
+			}
+		}
 		if weightValue, present := attributes["weight"]; present {
 			weight, ok := weightValue.(map[string]any)
 			if !ok || len(weight) == 0 {

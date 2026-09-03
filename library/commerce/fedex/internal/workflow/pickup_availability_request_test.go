@@ -100,6 +100,9 @@ func TestValidatePickupAvailabilityRequestRejectsMalformedNestedDetails(t *testi
 		"invalid dimension units": func(request map[string]any) {
 			request["shipmentAttributes"] = map[string]any{"serviceType": "FEDEX_GROUND", "dimensions": map[string]any{"length": 10, "width": 10, "height": 10, "units": "MM"}}
 		},
+		"your packaging missing dimensions": func(request map[string]any) {
+			request["shipmentAttributes"] = map[string]any{"serviceType": "FEDEX_GROUND", "packagingType": "YOUR_PACKAGING"}
+		},
 		"empty package detail": func(request map[string]any) { request["packageDetails"] = []any{map[string]any{}} },
 		"empty special services": func(request map[string]any) {
 			request["packageDetails"] = []any{map[string]any{"packageSpecialServices": map[string]any{}}}

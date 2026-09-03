@@ -28,10 +28,14 @@ func TestValidatePickupAvailabilityBinding(t *testing.T) {
 		"dispatchDate":            "2026-09-04",
 		"packageReadyTime":        "09:00:00",
 		"customerCloseTime":       "17:00:00",
-		"pickupAddress":           address,
+		"pickupAddress":           map[string]any{"postalCode": "78701", "countryCode": "US"},
 	}
 	if err := ValidatePickupAvailabilityBinding(schedule, availability); err != nil {
 		t.Fatalf("valid binding rejected: %v", err)
+	}
+	availability["pickupAddress"] = address
+	if err := ValidatePickupAvailabilityBinding(schedule, availability); err != nil {
+		t.Fatalf("matching optional availability address fields rejected: %v", err)
 	}
 	availability["carriers"] = []any{"FDXG", "FDXE"}
 	if err := ValidatePickupAvailabilityBinding(schedule, availability); err == nil {
@@ -41,6 +45,11 @@ func TestValidatePickupAvailabilityBinding(t *testing.T) {
 	availability["dispatchDate"] = "2026-09-05"
 	if err := ValidatePickupAvailabilityBinding(schedule, availability); err == nil {
 		t.Fatal("mismatched dispatch date accepted")
+	}
+	availability["dispatchDate"] = "2026-09-04"
+	availability["pickupAddress"] = map[string]any{"postalCode": "78701", "countryCode": "US", "city": "Dallas"}
+	if err := ValidatePickupAvailabilityBinding(schedule, availability); err == nil {
+		t.Fatal("mismatched optional pickup address field accepted")
 	}
 }
 

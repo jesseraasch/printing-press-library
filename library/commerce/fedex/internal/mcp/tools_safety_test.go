@@ -146,26 +146,24 @@ func TestMCPMetadataMatchesRuntimeToolSurface(t *testing.T) {
 	names := make([]string, 0, len(manifest.Tools))
 	for _, tool := range manifest.Tools {
 		names = append(names, tool.Name)
-		if slices.Contains([]string{"get_rates", "validate_address", "validate_shipment", "pickup_availability"}, tool.Name) {
-			manifestRequest, ok := tool.Parameters.Properties["request"].(map[string]any)
-			if !ok {
-				t.Fatalf("tools-manifest read tool %s request schema=%#v", tool.Name, tool.Parameters.Properties["request"])
-			}
-			runtimeRequest, ok := s.ListTools()[tool.Name].Tool.InputSchema.Properties["request"].(map[string]any)
-			if !ok {
-				t.Fatalf("runtime read tool %s request schema=%#v", tool.Name, s.ListTools()[tool.Name].Tool.InputSchema.Properties["request"])
-			}
-			runtimeJSON, err := json.Marshal(runtimeRequest)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var normalizedRuntime map[string]any
-			if err := json.Unmarshal(runtimeJSON, &normalizedRuntime); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(manifestRequest, normalizedRuntime) {
-				t.Errorf("tools-manifest read tool %s request schema differs from runtime\nmanifest: %#v\nruntime: %#v", tool.Name, manifestRequest, normalizedRuntime)
-			}
+		manifestRequest, ok := tool.Parameters.Properties["request"].(map[string]any)
+		if !ok {
+			t.Fatalf("tools-manifest tool %s request schema=%#v", tool.Name, tool.Parameters.Properties["request"])
+		}
+		runtimeRequest, ok := s.ListTools()[tool.Name].Tool.InputSchema.Properties["request"].(map[string]any)
+		if !ok {
+			t.Fatalf("runtime tool %s request schema=%#v", tool.Name, s.ListTools()[tool.Name].Tool.InputSchema.Properties["request"])
+		}
+		runtimeJSON, err := json.Marshal(runtimeRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var normalizedRuntime map[string]any
+		if err := json.Unmarshal(runtimeJSON, &normalizedRuntime); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(manifestRequest, normalizedRuntime) {
+			t.Errorf("tools-manifest tool %s request schema differs from runtime\nmanifest: %#v\nruntime: %#v", tool.Name, manifestRequest, normalizedRuntime)
 		}
 		if tool.Name == "schedule_pickup" {
 			manifestAvailability, ok := tool.Parameters.Properties["availability_request"].(map[string]any)
@@ -269,6 +267,9 @@ func TestReadToolSchemasExposeOperationSpecificNestedRequirements(t *testing.T) 
 	attributes := pickupProperties["shipmentAttributes"].(map[string]any)
 	if !slices.Contains(attributes["required"].([]string), "serviceType") {
 		t.Fatalf("pickup shipmentAttributes does not require serviceType when provided: %#v", attributes)
+	}
+	if _, ok := attributes["allOf"].([]any); !ok {
+		t.Fatalf("pickup shipmentAttributes lacks YOUR_PACKAGING dimensions requirement: %#v", attributes)
 	}
 	dimensions := attributes["properties"].(map[string]any)["dimensions"].(map[string]any)
 	dimensionRequired := dimensions["required"].([]string)
