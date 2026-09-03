@@ -101,13 +101,13 @@ func pickupPreflightFixture() (map[string]any, string) {
 		"totalWeight":             map[string]any{"units": "LB", "value": 2.0},
 		"originDetail": map[string]any{
 			"readyDateTimestamp": "2026-09-04T09:00:00-05:00",
-			"customerCloseTime":  "17:00",
+			"customerCloseTime":  "17:00:00",
 			"pickupLocation": map[string]any{
 				"contact": map[string]any{"personName": "Test User", "phoneNumber": "5555550100"},
 				"address": address,
 			},
 		},
 	}
-	availability := `{"associatedAccountNumber":"123456789","carriers":["FDXG"],"pickupRequestType":["SAME_DAY"],"countryRelationship":"DOMESTIC","dispatchDate":"2026-09-04","packageReadyTime":"09:00","customerCloseTime":"17:00","pickupAddress":{"streetLines":["1 Test Way"],"city":"Austin","stateOrProvinceCode":"TX","postalCode":"78701","countryCode":"US"}}`
+	availability := `{"associatedAccountNumber":"123456789","carriers":["FDXG"],"pickupRequestType":["SAME_DAY"],"countryRelationship":"DOMESTIC","dispatchDate":"2026-09-04","packageReadyTime":"09:00:00","customerCloseTime":"17:00:00","pickupAddress":{"streetLines":["1 Test Way"],"city":"Austin","stateOrProvinceCode":"TX","postalCode":"78701","countryCode":"US"}}`
 	return schedule, availability
 }

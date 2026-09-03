@@ -120,16 +120,31 @@ type malformedReadRequest struct {
 
 func malformedReadRequests() []malformedReadRequest {
 	return []malformedReadRequest{
-		{"rates wrong account field", "get_rates", map[string]any{"accountNumber": map[string]any{"associatedAccountNumber": "123"}, "requestedShipment": map[string]any{"arbitrary": true}}},
-		{"rates shallow shipment", "get_rates", map[string]any{"accountNumber": map[string]any{"value": "123"}, "requestedShipment": map[string]any{"arbitrary": true}}},
-		{"address missing street", "validate_address", map[string]any{"addressesToValidate": []any{map[string]any{"city": "Denver", "postalCode": "80202", "countryCode": "US"}}}},
+		{"rate wrong account field", "get_rates", map[string]any{"accountNumber": map[string]any{"number": "123"}, "requestedShipment": map[string]any{}}},
+		{"rate invalid carrier", "get_rates", rateRequestWithCarriers([]any{"OTHER"})},
+		{"rate invalid controls", "get_rates", rateRequestWithControls(map[string]any{"returnTransitTimes": "yes"})},
+		{"rate inconsistent grouped total", "get_rates", rateRequestWithGroupedTotal(2, 1)},
+		{"rate pickup option missing detail", "get_rates", rateRequestWithoutPickupDetail()},
+		{"rate missing nested address", "get_rates", map[string]any{"accountNumber": map[string]any{"value": "123"}, "requestedShipment": map[string]any{"shipper": map[string]any{}, "recipient": map[string]any{}, "pickupType": "DROPOFF_AT_FEDEX_LOCATION", "rateRequestType": []any{"ACCOUNT"}, "requestedPackageLineItems": []any{map[string]any{"weight": map[string]any{"units": "LB", "value": 1}}}}}},
+		{"address missing street", "validate_address", map[string]any{"addressesToValidate": []any{map[string]any{"address": map[string]any{"countryCode": "US"}}}}},
+		{"address invalid controls", "validate_address", map[string]any{"addressesToValidate": []any{map[string]any{"address": map[string]any{"streetLines": []any{"1 Test Way"}, "postalCode": "78701", "countryCode": "US"}}}, "validateAddressControlParameters": map[string]any{"includeResolutionTokens": "yes"}}},
 		{"shipment missing parties", "validate_shipment", map[string]any{"accountNumber": map[string]any{"value": "123"}, "requestedShipment": map[string]any{"serviceType": "FEDEX_GROUND", "packagingType": "YOUR_PACKAGING", "requestedPackageLineItems": []any{map[string]any{"weight": map[string]any{"units": "LB", "value": 2}}}}}},
-		{"shipment grouped package", "validate_shipment", map[string]any{"accountNumber": map[string]any{"value": "123"}, "requestedShipment": map[string]any{"shipper": testReadParty(), "recipients": []any{testReadParty()}, "serviceType": "FEDEX_GROUND", "packagingType": "YOUR_PACKAGING", "requestedPackageLineItems": []any{map[string]any{"groupPackageCount": 2, "weight": map[string]any{"units": "LB", "value": 2}}}}}},
-		{"shipment wrong sequence", "validate_shipment", map[string]any{"accountNumber": map[string]any{"value": "123"}, "requestedShipment": map[string]any{"shipper": testReadParty(), "recipients": []any{testReadParty()}, "serviceType": "FEDEX_GROUND", "packagingType": "YOUR_PACKAGING", "requestedPackageLineItems": []any{map[string]any{"sequenceNumber": 2, "weight": map[string]any{"units": "LB", "value": 2}}}}}},
-		{"pickup numeric carrier", "pickup_availability", map[string]any{"pickupAddress": testReadAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{1}, "countryRelationship": "DOMESTIC"}},
-		{"pickup nonobject package detail", "pickup_availability", map[string]any{"pickupAddress": testReadAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{"FDXG"}, "countryRelationship": "DOMESTIC", "packageDetails": []any{"invalid"}}},
-		{"pickup wrong account shape", "pickup_availability", map[string]any{"pickupAddress": testReadAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{"FDXG"}, "countryRelationship": "DOMESTIC", "associatedAccountNumber": map[string]any{"value": "123"}}},
-		{"pickup missing request type", "pickup_availability", map[string]any{"pickupAddress": testReadAddress(), "carriers": []any{"FDXG"}, "countryRelationship": "DOMESTIC"}},
+		{"shipment missing pickup type", "validate_shipment", shipmentValidationRequestWithout("pickupType")},
+		{"shipment missing total weight", "validate_shipment", shipmentValidationRequestWithout("totalWeight")},
+		{"shipment zero total weight", "validate_shipment", shipmentValidationRequestWithTotalWeight(0)},
+		{"shipment missing payment", "validate_shipment", shipmentValidationRequestWithout("shippingChargesPayment")},
+		{"shipment third party payment missing payor", "validate_shipment", shipmentValidationRequestWithPayment(map[string]any{"paymentType": "THIRD_PARTY"})},
+		{"shipment missing label specification", "validate_shipment", shipmentValidationRequestWithout("labelSpecification")},
+		{"shipment unknown label stock", "validate_shipment", shipmentValidationRequestWithLabelStock("UNKNOWN")},
+		{"shipment grouped package", "validate_shipment", shipmentValidationRequestWithPackageField("groupPackageCount", 2)},
+		{"shipment wrong sequence", "validate_shipment", shipmentValidationRequestWithPackageField("sequenceNumber", 2)},
+		{"pickup numeric carrier", "pickup_availability", map[string]any{"pickupAddress": testPickupAvailabilityAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{1}, "countryRelationship": "DOMESTIC"}},
+		{"pickup nonobject package detail", "pickup_availability", map[string]any{"pickupAddress": testPickupAvailabilityAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{"FDXG"}, "countryRelationship": "DOMESTIC", "packageDetails": []any{"invalid"}}},
+		{"pickup empty package detail", "pickup_availability", map[string]any{"pickupAddress": testPickupAvailabilityAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{"FDXG"}, "countryRelationship": "DOMESTIC", "packageDetails": []any{map[string]any{}}}},
+		{"pickup empty shipment attributes", "pickup_availability", map[string]any{"pickupAddress": testPickupAvailabilityAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{"FDXG"}, "countryRelationship": "DOMESTIC", "shipmentAttributes": map[string]any{}}},
+		{"pickup incomplete dimensions", "pickup_availability", map[string]any{"pickupAddress": testPickupAvailabilityAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{"FDXE"}, "countryRelationship": "INTERNATIONAL", "shipmentAttributes": map[string]any{"serviceType": "INTERNATIONAL_PRIORITY", "dimensions": map[string]any{"length": 1, "units": "IN"}}}},
+		{"pickup wrong account shape", "pickup_availability", map[string]any{"pickupAddress": testPickupAvailabilityAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{"FDXG"}, "countryRelationship": "DOMESTIC", "associatedAccountNumber": map[string]any{"value": "123"}}},
+		{"pickup missing request type", "pickup_availability", map[string]any{"pickupAddress": testPickupAvailabilityAddress(), "carriers": []any{"FDXG"}, "countryRelationship": "DOMESTIC"}},
 	}
 }
 
@@ -150,6 +165,57 @@ func TestValidateNarrowReadRequestAcceptsWellFormedRequests(t *testing.T) {
 				t.Fatalf("well-formed request rejected: %v", err)
 			}
 		})
+	}
+}
+
+func TestValidateAddressAcceptsCountrySpecificMinimums(t *testing.T) {
+	addresses := map[string]map[string]any{
+		"US postal":     {"streetLines": []any{"10 FedEx Parkway"}, "postalCode": "38116", "countryCode": "US"},
+		"US city state": {"streetLines": []any{"10 FedEx Parkway"}, "city": "Memphis", "stateOrProvinceCode": "TN", "countryCode": "US"},
+		"non-US common": {"streetLines": []any{"20 Rue de la Paix"}, "countryCode": "FR"},
+	}
+	for name, address := range addresses {
+		t.Run(name, func(t *testing.T) {
+			request := map[string]any{"addressesToValidate": []any{map[string]any{"address": address}}}
+			if err := validateNarrowReadRequest("validate_address", request); err != nil {
+				t.Fatalf("official address minimum rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateRatesAcceptsOfficialMinimumAndGroupedPackages(t *testing.T) {
+	request := testReadRequests()["get_rates"]
+	shipment := request["requestedShipment"].(map[string]any)
+	delete(shipment, "rateRequestType")
+	shipment["totalPackageCount"] = 2
+	shipment["requestedPackageLineItems"].([]any)[0].(map[string]any)["groupPackageCount"] = 2
+	request["carrierCodes"] = []any{"FXSP"}
+	if err := validateNarrowReadRequest("get_rates", request); err != nil {
+		t.Fatalf("official minimum grouped rate request rejected: %v", err)
+	}
+}
+
+func TestValidateShipmentAcceptsConditionalInternationalAddressAndPayor(t *testing.T) {
+	request := shipmentValidationRequestWithPayment(map[string]any{
+		"paymentType": "THIRD_PARTY",
+		"payor": map[string]any{
+			"responsibleParty": map[string]any{"accountNumber": map[string]any{"value": "987654321"}},
+		},
+	})
+	shipment := request["requestedShipment"].(map[string]any)
+	address := map[string]any{"streetLines": []any{"20 Rue de la Paix"}, "city": "Paris", "countryCode": "FR"}
+	shipment["shipper"].(map[string]any)["address"] = address
+	shipment["recipients"].([]any)[0].(map[string]any)["address"] = address
+	if err := validateNarrowReadRequest("validate_shipment", request); err != nil {
+		t.Fatalf("conditional international shipment request rejected: %v", err)
+	}
+}
+
+func TestValidateShipmentAcceptsCollectWithoutPayor(t *testing.T) {
+	request := shipmentValidationRequestWithPayment(map[string]any{"paymentType": "COLLECT"})
+	if err := validateNarrowReadRequest("validate_shipment", request); err != nil {
+		t.Fatalf("COLLECT shipment without payor rejected: %v", err)
 	}
 }
 
@@ -184,48 +250,121 @@ func TestMalformedNarrowReadRequestsMakeNoHTTPCalls(t *testing.T) {
 func testReadRequests() map[string]map[string]any {
 	return map[string]map[string]any{
 		"get_rates": {
-			"accountNumber": map[string]any{"value": "123"},
-			"carrierCodes":  []any{"FDXG"},
+			"accountNumber":                map[string]any{"value": "123"},
+			"carrierCodes":                 []any{"FDXG"},
+			"processingOptions":            []any{"INCLUDE_PICKUPRATES"},
+			"rateRequestControlParameters": map[string]any{"returnTransitTimes": true, "rateSortOrder": "COMMITASCENDING"},
 			"requestedShipment": map[string]any{
 				"shipper":         map[string]any{"address": map[string]any{"postalCode": "78701", "countryCode": "US"}},
 				"recipient":       map[string]any{"address": map[string]any{"postalCode": "80202", "countryCode": "US"}},
 				"pickupType":      "DROPOFF_AT_FEDEX_LOCATION",
+				"pickupDetail":    map[string]any{"requestType": "SAME_DAY", "requestSource": "AUTOMATION"},
 				"rateRequestType": []any{"ACCOUNT"},
 				"requestedPackageLineItems": []any{map[string]any{
 					"weight": map[string]any{"units": "LB", "value": 2},
 				}},
 			},
 		},
-		"validate_address": {"addressesToValidate": []any{map[string]any{"address": testReadAddress()}}},
-		"validate_shipment": {
-			"accountNumber": map[string]any{"value": "123"},
-			"requestedShipment": map[string]any{
-				"shipper":                   testReadParty(),
-				"recipients":                []any{testReadParty()},
-				"serviceType":               "FEDEX_GROUND",
-				"packagingType":             "YOUR_PACKAGING",
-				"totalPackageCount":         1,
-				"requestedPackageLineItems": []any{map[string]any{"sequenceNumber": 1, "groupPackageCount": 1, "weight": map[string]any{"units": "LB", "value": 2}}},
-			},
-		},
+		"validate_address":  {"addressesToValidate": []any{map[string]any{"clientReferenceId": "test-address", "address": map[string]any{"streetLines": []any{"10 FedEx Parkway"}, "postalCode": "38116", "countryCode": "US"}}}, "validateAddressControlParameters": map[string]any{"includeResolutionTokens": true}},
+		"validate_shipment": testShipmentValidationRequest(),
 		"pickup_availability": {
-			"pickupAddress":           testReadAddress(),
+			"pickupAddress":           testPickupAvailabilityAddress(),
 			"pickupRequestType":       []any{"SAME_DAY"},
 			"carriers":                []any{"FDXG"},
 			"countryRelationship":     "DOMESTIC",
 			"associatedAccountNumber": "123",
 			"dispatchDate":            "2026-09-03",
-			"packageReadyTime":        "09:00",
-			"customerCloseTime":       "17:00",
-			"packageDetails":          []any{map[string]any{"packageCount": 1, "weight": map[string]any{"units": "LB", "value": 2}}},
+			"packageReadyTime":        "09:00:00",
+			"customerCloseTime":       "17:00:00",
+			"shipmentAttributes":      map[string]any{"serviceType": "FEDEX_GROUND", "packagingType": "YOUR_PACKAGING", "weight": map[string]any{"units": "LB", "value": 2}, "dimensions": map[string]any{"length": 10, "width": 8, "height": 6, "units": "IN"}},
+			"packageDetails":          []any{map[string]any{"packageSpecialServices": map[string]any{"specialServiceTypes": []any{"SIGNATURE_OPTION"}}}},
 		},
 	}
+}
+
+func testShipmentValidationRequest() map[string]any {
+	return map[string]any{
+		"accountNumber": map[string]any{"value": "123"},
+		"requestedShipment": map[string]any{
+			"shipper":                   testReadParty(),
+			"recipients":                []any{testReadParty()},
+			"pickupType":                "DROPOFF_AT_FEDEX_LOCATION",
+			"serviceType":               "FEDEX_GROUND",
+			"packagingType":             "YOUR_PACKAGING",
+			"totalWeight":               1,
+			"shippingChargesPayment":    map[string]any{"paymentType": "SENDER"},
+			"labelSpecification":        map[string]any{"imageType": "PDF", "labelStockType": "PAPER_4X6"},
+			"totalPackageCount":         1,
+			"requestedPackageLineItems": []any{map[string]any{"sequenceNumber": 1, "groupPackageCount": 1, "weight": map[string]any{"units": "LB", "value": 2}}},
+		},
+	}
+}
+
+func shipmentValidationRequestWithout(field string) map[string]any {
+	request := testShipmentValidationRequest()
+	delete(request["requestedShipment"].(map[string]any), field)
+	return request
+}
+
+func shipmentValidationRequestWithPackageField(field string, value any) map[string]any {
+	request := testShipmentValidationRequest()
+	shipment := request["requestedShipment"].(map[string]any)
+	shipment["requestedPackageLineItems"].([]any)[0].(map[string]any)[field] = value
+	return request
+}
+
+func shipmentValidationRequestWithPayment(payment map[string]any) map[string]any {
+	request := testShipmentValidationRequest()
+	request["requestedShipment"].(map[string]any)["shippingChargesPayment"] = payment
+	return request
+}
+
+func rateRequestWithCarriers(carriers []any) map[string]any {
+	request := testReadRequests()["get_rates"]
+	request["carrierCodes"] = carriers
+	return request
+}
+
+func rateRequestWithControls(controls map[string]any) map[string]any {
+	request := testReadRequests()["get_rates"]
+	request["rateRequestControlParameters"] = controls
+	return request
+}
+
+func rateRequestWithGroupedTotal(groupCount, totalCount int) map[string]any {
+	request := testReadRequests()["get_rates"]
+	shipment := request["requestedShipment"].(map[string]any)
+	shipment["requestedPackageLineItems"].([]any)[0].(map[string]any)["groupPackageCount"] = groupCount
+	shipment["totalPackageCount"] = totalCount
+	return request
+}
+
+func rateRequestWithoutPickupDetail() map[string]any {
+	request := testReadRequests()["get_rates"]
+	delete(request["requestedShipment"].(map[string]any), "pickupDetail")
+	return request
+}
+
+func shipmentValidationRequestWithTotalWeight(totalWeight any) map[string]any {
+	request := testShipmentValidationRequest()
+	request["requestedShipment"].(map[string]any)["totalWeight"] = totalWeight
+	return request
+}
+
+func shipmentValidationRequestWithLabelStock(labelStock string) map[string]any {
+	request := testShipmentValidationRequest()
+	request["requestedShipment"].(map[string]any)["labelSpecification"].(map[string]any)["labelStockType"] = labelStock
+	return request
 }
 
 func testReadAddress() map[string]any {
 	return map[string]any{"streetLines": []any{"1 Test Way"}, "city": "Austin", "stateOrProvinceCode": "TX", "postalCode": "78701", "countryCode": "US"}
 }
 
+func testPickupAvailabilityAddress() map[string]any {
+	return map[string]any{"postalCode": "78701", "countryCode": "US"}
+}
+
 func testReadParty() map[string]any {
-	return map[string]any{"contact": map[string]any{"phoneNumber": "5555550100"}, "address": testReadAddress()}
+	return map[string]any{"contact": map[string]any{"companyName": "FedEx Test", "phoneNumber": "5555550100"}, "address": testReadAddress()}
 }

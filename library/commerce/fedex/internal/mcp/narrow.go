@@ -111,11 +111,34 @@ func requestSchemaRequired(action string) []string {
 
 func requestSchemaProperties(action string) map[string]any {
 	account := map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}}, "required": []string{"value"}}
-	address := map[string]any{"type": "object", "properties": map[string]any{"streetLines": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}}, "city": map[string]any{"type": "string"}, "stateOrProvinceCode": map[string]any{"type": "string"}, "postalCode": map[string]any{"type": "string"}, "countryCode": map[string]any{"type": "string"}}, "required": []string{"streetLines", "city", "postalCode", "countryCode"}}
-	contact := map[string]any{"type": "object", "properties": map[string]any{"personName": map[string]any{"type": "string"}, "companyName": map[string]any{"type": "string"}, "phoneNumber": map[string]any{"type": "string"}}, "required": []string{"phoneNumber"}}
-	party := map[string]any{"type": "object", "properties": map[string]any{"contact": contact, "address": address}, "required": []string{"contact", "address"}}
+	addressProperties := map[string]any{"streetLines": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}}, "city": map[string]any{"type": "string"}, "stateOrProvinceCode": map[string]any{"type": "string"}, "postalCode": map[string]any{"type": "string"}, "countryCode": map[string]any{"type": "string"}}
+	addressValidationAddress := map[string]any{"type": "object", "properties": addressProperties, "required": []string{"streetLines", "countryCode"}, "allOf": []any{map[string]any{"if": map[string]any{"properties": map[string]any{"countryCode": map[string]any{"enum": []string{"US"}}}}, "then": map[string]any{"anyOf": []any{map[string]any{"required": []string{"postalCode"}}, map[string]any{"required": []string{"city", "stateOrProvinceCode"}}}}}}}
+	shipmentAddress := map[string]any{"type": "object", "properties": addressProperties, "required": []string{"streetLines", "city", "countryCode"}, "allOf": []any{map[string]any{"if": map[string]any{"properties": map[string]any{"countryCode": map[string]any{"enum": []string{"US", "CA", "PR"}}}}, "then": map[string]any{"required": []string{"stateOrProvinceCode", "postalCode"}}}}}
+	operationalAddress := map[string]any{"type": "object", "properties": addressProperties, "required": []string{"streetLines", "city", "stateOrProvinceCode", "postalCode", "countryCode"}}
+	pickupAvailabilityAddress := map[string]any{"type": "object", "properties": addressProperties, "required": []string{"postalCode", "countryCode"}}
+	contact := map[string]any{"type": "object", "properties": map[string]any{"personName": map[string]any{"type": "string"}, "companyName": map[string]any{"type": "string"}, "phoneNumber": map[string]any{"type": "string"}}, "required": []string{"phoneNumber"}, "anyOf": []any{map[string]any{"required": []string{"personName"}}, map[string]any{"required": []string{"companyName"}}}}
+	party := map[string]any{"type": "object", "properties": map[string]any{"contact": contact, "address": operationalAddress}, "required": []string{"contact", "address"}}
+	shipmentValidationParty := map[string]any{"type": "object", "properties": map[string]any{"contact": contact, "address": shipmentAddress}, "required": []string{"contact", "address"}}
 	rateAddress := map[string]any{"type": "object", "properties": map[string]any{"postalCode": map[string]any{"type": "string"}, "countryCode": map[string]any{"type": "string"}}, "required": []string{"postalCode", "countryCode"}}
+	rateControls := map[string]any{"type": "object", "properties": map[string]any{
+		"returnTransitTimes":          map[string]any{"type": "boolean"},
+		"servicesNeededOnRateFailure": map[string]any{"type": "boolean"},
+		"variableOptions":             map[string]any{"type": "string", "enum": []string{"SATURDAY_DELIVERY", "FREIGHT_GUARANTEE", "SMART_POST_ALLOWED_INDICIA", "SMARTPOST_HUB_ID"}},
+		"rateSortOrder":               map[string]any{"type": "string", "enum": []string{"COMMITASCENDING", "SERVICENAMETRADITIONAL", "COMMITDESCENDING"}},
+	}}
+	ratePickupDetail := map[string]any{"type": "object", "properties": map[string]any{
+		"readyDateTime":        map[string]any{"type": "string"},
+		"latestPickupDateTime": map[string]any{"type": "string"},
+		"courierInstructions":  map[string]any{"type": "string"},
+		"requestType":          map[string]any{"type": "string", "enum": []string{"FUTURE_DAY", "SAME_DAY"}},
+		"requestSource":        map[string]any{"type": "string", "enum": []string{"AUTOMATION", "CUSTOMER_SERVICE"}},
+	}, "allOf": []any{map[string]any{"if": map[string]any{"properties": map[string]any{"requestType": map[string]any{"enum": []string{"FUTURE_DAY"}}}, "required": []string{"requestType"}}, "then": map[string]any{"required": []string{"readyDateTime", "latestPickupDateTime"}}}}}
 	weight := map[string]any{"type": "object", "properties": map[string]any{"units": map[string]any{"type": "string", "enum": []string{"LB", "KG"}}, "value": map[string]any{"type": "number", "exclusiveMinimum": 0}}, "required": []string{"units", "value"}}
+	paymentPayor := map[string]any{"type": "object", "properties": map[string]any{"responsibleParty": map[string]any{"type": "object", "properties": map[string]any{"accountNumber": account}, "required": []string{"accountNumber"}}}, "required": []string{"responsibleParty"}}
+	shippingPayment := map[string]any{"type": "object", "properties": map[string]any{"paymentType": map[string]any{"type": "string", "enum": []string{"SENDER", "RECIPIENT", "THIRD_PARTY", "COLLECT"}}, "payor": paymentPayor}, "required": []string{"paymentType"}, "allOf": []any{map[string]any{"if": map[string]any{"properties": map[string]any{"paymentType": map[string]any{"enum": []string{"RECIPIENT", "THIRD_PARTY"}}}}, "then": map[string]any{"required": []string{"payor"}}}}}
+	dimensions := map[string]any{"type": "object", "properties": map[string]any{"length": map[string]any{"type": "integer", "minimum": 1, "maximum": 999}, "width": map[string]any{"type": "integer", "minimum": 1, "maximum": 999}, "height": map[string]any{"type": "integer", "minimum": 1, "maximum": 999}, "units": map[string]any{"type": "string", "enum": []string{"CM", "IN"}}}, "required": []string{"length", "width", "height", "units"}}
+	pickupShipmentAttributes := map[string]any{"type": "object", "properties": map[string]any{"serviceType": map[string]any{"type": "string"}, "weight": weight, "packagingType": map[string]any{"type": "string"}, "dimensions": dimensions}, "required": []string{"serviceType"}}
+	pickupPackageDetails := map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object", "properties": map[string]any{"packageSpecialServices": map[string]any{"type": "object", "properties": map[string]any{"specialServiceTypes": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}}}, "required": []string{"specialServiceTypes"}}}, "required": []string{"packageSpecialServices"}}}
 	switch action {
 	case "get_rates":
 		return map[string]any{
@@ -123,42 +146,49 @@ func requestSchemaProperties(action string) map[string]any {
 			"requestedShipment": map[string]any{"type": "object", "properties": map[string]any{
 				"shipper":    map[string]any{"type": "object", "properties": map[string]any{"address": rateAddress}, "required": []string{"address"}},
 				"recipient":  map[string]any{"type": "object", "properties": map[string]any{"address": rateAddress}, "required": []string{"address"}},
-				"pickupType": map[string]any{"type": "string"}, "serviceType": map[string]any{"type": "string"},
-				"rateRequestType":           map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}},
-				"requestedPackageLineItems": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object", "properties": map[string]any{"weight": weight, "groupPackageCount": map[string]any{"type": "integer", "enum": []int{1}}}, "required": []string{"weight"}}},
-			}, "required": []string{"shipper", "recipient", "pickupType", "rateRequestType", "requestedPackageLineItems"}},
-			"rateRequestControlParameters": map[string]any{"type": "object"},
-			"carrierCodes":                 map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG"}}},
+				"pickupType": map[string]any{"type": "string", "enum": []string{"CONTACT_FEDEX_TO_SCHEDULE", "DROPOFF_AT_FEDEX_LOCATION", "USE_SCHEDULED_PICKUP"}}, "serviceType": map[string]any{"type": "string"}, "packagingType": map[string]any{"type": "string"}, "pickupDetail": ratePickupDetail,
+				"rateRequestType":           map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"LIST", "INCENTIVE", "ACCOUNT", "PREFERRED"}}},
+				"totalPackageCount":         map[string]any{"type": "integer", "minimum": 1, "maximum": 100},
+				"requestedPackageLineItems": map[string]any{"type": "array", "minItems": 1, "maxItems": 99, "items": map[string]any{"type": "object", "properties": map[string]any{"weight": weight, "groupPackageCount": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}}, "required": []string{"weight"}}},
+			}, "required": []string{"shipper", "recipient", "pickupType", "requestedPackageLineItems"}},
+			"rateRequestControlParameters": rateControls,
+			"processingOptions":            map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"INCLUDE_PICKUPRATES"}}},
+			"carrierCodes":                 map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG", "FXSP", "FXCC"}}},
 		}
 	case "validate_address":
 		return map[string]any{
-			"addressesToValidate":              map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "object", "properties": map[string]any{"address": address}, "required": []string{"address"}}},
+			"addressesToValidate":              map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "object", "properties": map[string]any{"address": addressValidationAddress, "clientReferenceId": map[string]any{"type": "string"}}, "required": []string{"address"}}},
 			"inEffectAsOfTimestamp":            map[string]any{"type": "string"},
-			"validateAddressControlParameters": map[string]any{"type": "object"},
+			"validateAddressControlParameters": map[string]any{"type": "object", "properties": map[string]any{"includeResolutionTokens": map[string]any{"type": "boolean"}}},
 		}
 	case "validate_shipment":
 		return map[string]any{
 			"accountNumber": account,
 			"requestedShipment": map[string]any{"type": "object", "properties": map[string]any{
-				"shipper": party, "recipients": map[string]any{"type": "array", "minItems": 1, "maxItems": 1, "items": party},
-				"serviceType": map[string]any{"type": "string"}, "packagingType": map[string]any{"type": "string"},
+				"shipper": shipmentValidationParty, "recipients": map[string]any{"type": "array", "minItems": 1, "maxItems": 1, "items": shipmentValidationParty},
+				"pickupType":  map[string]any{"type": "string", "enum": []string{"CONTACT_FEDEX_TO_SCHEDULE", "DROPOFF_AT_FEDEX_LOCATION", "USE_SCHEDULED_PICKUP"}},
+				"serviceType": map[string]any{"type": "string"}, "packagingType": map[string]any{"type": "string"}, "totalWeight": map[string]any{"type": "integer", "minimum": 1},
+				"shippingChargesPayment":    shippingPayment,
+				"labelSpecification":        map[string]any{"type": "object", "properties": map[string]any{"imageType": map[string]any{"type": "string", "enum": []string{"ZPLII", "EPL2", "PDF", "PNG"}}, "labelStockType": map[string]any{"type": "string", "enum": []string{"PAPER_4X6", "STOCK_4X675", "PAPER_4X675", "PAPER_4X8", "PAPER_4X9", "PAPER_7X475", "PAPER_85X11_BOTTOM_HALF_LABEL", "PAPER_85X11_TOP_HALF_LABEL", "PAPER_LETTER", "STOCK_4X675_LEADING_DOC_TAB", "STOCK_4X8", "STOCK_4X9_LEADING_DOC_TAB", "STOCK_4X6", "STOCK_4X675_TRAILING_DOC_TAB", "STOCK_4X9_TRAILING_DOC_TAB", "STOCK_4X9", "STOCK_4X85_TRAILING_DOC_TAB", "STOCK_4X105_TRAILING_DOC_TAB"}}, "labelFormatType": map[string]any{"type": "string", "enum": []string{"COMMON2D", "LABEL_DATA_ONLY"}}}, "required": []string{"imageType", "labelStockType"}},
 				"totalPackageCount":         map[string]any{"type": "integer", "enum": []int{1}},
 				"requestedPackageLineItems": map[string]any{"type": "array", "minItems": 1, "maxItems": 1, "items": map[string]any{"type": "object", "properties": map[string]any{"weight": weight, "groupPackageCount": map[string]any{"type": "integer", "enum": []int{1}}, "sequenceNumber": map[string]any{"type": "integer", "enum": []int{1}}}, "required": []string{"weight"}}},
-			}, "required": []string{"shipper", "recipients", "serviceType", "packagingType", "requestedPackageLineItems"}},
+			}, "required": []string{"shipper", "recipients", "pickupType", "serviceType", "packagingType", "totalWeight", "shippingChargesPayment", "labelSpecification", "requestedPackageLineItems"}},
 		}
 	case "pickup_availability":
 		return map[string]any{
-			"pickupAddress":           address,
-			"dispatchDate":            map[string]any{"type": "string"},
-			"packageReadyTime":        map[string]any{"type": "string"},
-			"customerCloseTime":       map[string]any{"type": "string"},
-			"pickupRequestType":       map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"SAME_DAY", "FUTURE_DAY"}}},
-			"shipmentAttributes":      map[string]any{"type": "object"},
-			"numberOfBusinessDays":    map[string]any{"type": "integer", "minimum": 0},
-			"packageDetails":          map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object"}},
-			"associatedAccountNumber": map[string]any{"type": "string"},
-			"carriers":                map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG"}}},
-			"countryRelationship":     map[string]any{"type": "string", "enum": []string{"DOMESTIC", "INTERNATIONAL"}},
+			"pickupAddress":               pickupAvailabilityAddress,
+			"dispatchDate":                map[string]any{"type": "string"},
+			"packageReadyTime":            map[string]any{"type": "string"},
+			"customerCloseTime":           map[string]any{"type": "string"},
+			"pickupType":                  map[string]any{"type": "string", "enum": []string{"ON_CALL", "TAG"}},
+			"pickupRequestType":           map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"SAME_DAY", "FUTURE_DAY"}}},
+			"shipmentAttributes":          pickupShipmentAttributes,
+			"numberOfBusinessDays":        map[string]any{"type": "integer", "minimum": 0},
+			"packageDetails":              pickupPackageDetails,
+			"associatedAccountNumber":     map[string]any{"type": "string"},
+			"associatedAccountNumberType": map[string]any{"type": "string", "enum": []string{"FEDEX_EXPRESS", "FEDEX_GROUND"}},
+			"carriers":                    map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG"}}},
+			"countryRelationship":         map[string]any{"type": "string", "enum": []string{"DOMESTIC", "INTERNATIONAL"}},
 		}
 	case workflow.ActionCreateLabel:
 		return map[string]any{
@@ -174,7 +204,7 @@ func requestSchemaProperties(action string) map[string]any {
 	case workflow.ActionCancelShipment:
 		return map[string]any{"accountNumber": account, "trackingNumber": map[string]any{"type": "string"}, "senderCountryCode": map[string]any{"type": "string"}, "deletionControl": map[string]any{"type": "string", "enum": []string{"DELETE_ALL_PACKAGES", "DELETE_ONE_PACKAGE"}}}
 	case workflow.ActionSchedulePickup:
-		return map[string]any{"associatedAccountNumber": account, "carrierCode": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG"}}, "packageCount": map[string]any{"type": "integer", "minimum": 1}, "totalWeight": weight, "originDetail": map[string]any{"type": "object", "properties": map[string]any{"pickupLocation": map[string]any{"type": "object", "properties": map[string]any{"contact": contact, "address": address}, "required": []string{"contact", "address"}}, "readyDateTimestamp": map[string]any{"type": "string"}, "customerCloseTime": map[string]any{"type": "string"}}, "required": []string{"pickupLocation", "readyDateTimestamp", "customerCloseTime"}}}
+		return map[string]any{"associatedAccountNumber": account, "carrierCode": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG"}}, "packageCount": map[string]any{"type": "integer", "minimum": 1}, "totalWeight": weight, "originDetail": map[string]any{"type": "object", "properties": map[string]any{"pickupLocation": party, "readyDateTimestamp": map[string]any{"type": "string"}, "customerCloseTime": map[string]any{"type": "string"}}, "required": []string{"pickupLocation", "readyDateTimestamp", "customerCloseTime"}}}
 	case workflow.ActionCancelPickup:
 		return map[string]any{"pickupConfirmationCode": map[string]any{"type": "string"}, "associatedAccountNumber": account, "carrierCode": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG"}}, "scheduledDate": map[string]any{"type": "string"}, "location": map[string]any{"type": "string"}}
 	default:

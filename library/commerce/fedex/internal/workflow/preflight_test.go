@@ -13,7 +13,7 @@ func TestValidatePickupAvailabilityBinding(t *testing.T) {
 		"totalWeight":             map[string]any{"units": "LB", "value": 2.0},
 		"originDetail": map[string]any{
 			"readyDateTimestamp": "2026-09-04T09:00:00-05:00",
-			"customerCloseTime":  "17:00",
+			"customerCloseTime":  "17:00:00",
 			"pickupLocation": map[string]any{
 				"contact": map[string]any{"personName": "Test User", "phoneNumber": "5555550100"},
 				"address": address,
@@ -26,8 +26,8 @@ func TestValidatePickupAvailabilityBinding(t *testing.T) {
 		"pickupRequestType":       []any{"SAME_DAY"},
 		"countryRelationship":     "DOMESTIC",
 		"dispatchDate":            "2026-09-04",
-		"packageReadyTime":        "09:00",
-		"customerCloseTime":       "17:00",
+		"packageReadyTime":        "09:00:00",
+		"customerCloseTime":       "17:00:00",
 		"pickupAddress":           address,
 	}
 	if err := ValidatePickupAvailabilityBinding(schedule, availability); err != nil {

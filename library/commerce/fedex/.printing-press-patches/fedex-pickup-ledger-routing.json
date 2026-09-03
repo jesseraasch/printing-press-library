@@ -56,9 +56,11 @@
     "internal/workflow/express_persist_test.go",
     "internal/workflow/preflight.go",
     "internal/workflow/preflight_test.go",
+    "internal/workflow/pickup_availability_request.go",
+    "internal/workflow/pickup_availability_request_test.go",
     "internal/workflow/resolve.go",
     "internal/workflow/transitions_test.go",
     "tools-manifest.json"
   ],
-  "validated_outcome": "Tests bind the official preflight account/carrier/date/time/address request to the exact pickup, require exactly one matching output.options carrier/date result or a documented override, preserve structured access duration, persist executing/scheduled/cancelled/outcome-unknown state, block unsafe equivalent requests with OS-backed execution leases, require separately confirmed reconciliation before retry, update the operational ledger before releasing approval state, reject HTTP redirect replay, resolve local identifiers, require a reason for legacy records, and reject access tokens from a different API origin."
+  "validated_outcome": "Tests deeply validate the official pickup-availability request before any direct-read or scheduling-preflight HTTP call, bind its account/carrier/date/time/address to the exact pickup, require exactly one matching output.options carrier/date result or a documented override, preserve structured access duration, persist executing/scheduled/cancelled/outcome-unknown state, block unsafe equivalent requests with OS-backed execution leases, require separately confirmed reconciliation before retry, update the operational ledger before releasing approval state, reject HTTP redirect replay, resolve local identifiers, require a reason for legacy records, and reject access tokens from a different API origin."
 }

@@ -209,6 +209,67 @@ func TestMCPMetadataMatchesRuntimeToolSurface(t *testing.T) {
 	}
 }
 
+func TestReadToolSchemasExposeOperationSpecificNestedRequirements(t *testing.T) {
+	rateProperties := requestSchemaProperties("get_rates")
+	rateShipment := rateProperties["requestedShipment"].(map[string]any)
+	if slices.Contains(rateShipment["required"].([]string), "rateRequestType") {
+		t.Fatalf("rate schema incorrectly requires optional rateRequestType: %#v", rateShipment)
+	}
+	ratePackages := rateShipment["properties"].(map[string]any)["requestedPackageLineItems"].(map[string]any)
+	ratePackage := ratePackages["items"].(map[string]any)
+	groupCount := ratePackage["properties"].(map[string]any)["groupPackageCount"].(map[string]any)
+	if groupCount["minimum"] != 1 || groupCount["enum"] != nil {
+		t.Fatalf("rate schema does not allow positive grouped package counts: %#v", groupCount)
+	}
+	controls := rateProperties["rateRequestControlParameters"].(map[string]any)
+	if _, ok := controls["properties"].(map[string]any)["returnTransitTimes"]; !ok {
+		t.Fatalf("rate control schema remains opaque: %#v", controls)
+	}
+
+	addressProperties := requestSchemaProperties("validate_address")
+	addresses := addressProperties["addressesToValidate"].(map[string]any)
+	addressEntry := addresses["items"].(map[string]any)
+	address := addressEntry["properties"].(map[string]any)["address"].(map[string]any)
+	addressRequired := address["required"].([]string)
+	if !slices.Contains(addressRequired, "streetLines") || !slices.Contains(addressRequired, "countryCode") {
+		t.Fatalf("address validation common required fields=%v", addressRequired)
+	}
+	if slices.Contains(addressRequired, "city") || slices.Contains(addressRequired, "postalCode") {
+		t.Fatalf("address validation incorrectly requires country-specific fields globally: %v", addressRequired)
+	}
+	if _, ok := address["allOf"].([]any); !ok {
+		t.Fatalf("address validation schema lacks country-conditional requirements: %#v", address)
+	}
+	addressControls := addressProperties["validateAddressControlParameters"].(map[string]any)
+	if _, ok := addressControls["properties"].(map[string]any)["includeResolutionTokens"]; !ok {
+		t.Fatalf("address control schema remains opaque: %#v", addressControls)
+	}
+
+	shipmentProperties := requestSchemaProperties("validate_shipment")
+	shipment := shipmentProperties["requestedShipment"].(map[string]any)
+	shipmentRequired := shipment["required"].([]string)
+	for _, field := range []string{"pickupType", "totalWeight", "shippingChargesPayment", "labelSpecification", "shipper", "recipients", "requestedPackageLineItems"} {
+		if !slices.Contains(shipmentRequired, field) {
+			t.Errorf("shipment validation schema does not require %s: %v", field, shipmentRequired)
+		}
+	}
+	payment := shipment["properties"].(map[string]any)["shippingChargesPayment"].(map[string]any)
+	if _, ok := payment["allOf"].([]any); !ok {
+		t.Fatalf("shipment payment schema lacks conditional payor requirement: %#v", payment)
+	}
+
+	pickupProperties := requestSchemaProperties("pickup_availability")
+	attributes := pickupProperties["shipmentAttributes"].(map[string]any)
+	if !slices.Contains(attributes["required"].([]string), "serviceType") {
+		t.Fatalf("pickup shipmentAttributes does not require serviceType when provided: %#v", attributes)
+	}
+	packageDetails := pickupProperties["packageDetails"].(map[string]any)
+	packageItem := packageDetails["items"].(map[string]any)
+	if !slices.Contains(packageItem["required"].([]string), "packageSpecialServices") {
+		t.Fatalf("pickup packageDetails remains opaque: %#v", packageItem)
+	}
+}
+
 func TestCreateLabelRequiresPreviewAndBoundConfirmation(t *testing.T) {
 	calls := 0
 	var gotBody []byte

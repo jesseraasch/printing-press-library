@@ -46,7 +46,7 @@ func TestSchedulePickupBindsPreflightAndPersistsLedger(t *testing.T) {
 		"pickupRequestType":       []any{"SAME_DAY"},
 		"countryRelationship":     "DOMESTIC",
 		"dispatchDate":            "2026-09-03",
-		"packageReadyTime":        "09:00",
+		"packageReadyTime":        "09:00:00",
 		"customerCloseTime":       "17:00:00",
 		"pickupAddress":           address,
 	}
@@ -85,5 +85,42 @@ func TestSchedulePickupBindsPreflightAndPersistsLedger(t *testing.T) {
 	_ = ledger.Close()
 	if err != nil || pickup == nil || pickup.Status != "scheduled" || pickup.ConfirmationNumber != "PU123" || pickup.PreflightStatus != "verified" || pickup.CutoffTime != "17:00" || pickup.AccessStartTime != "1h30m" {
 		t.Fatalf("pickup=%+v err=%v", pickup, err)
+	}
+}
+
+func TestSchedulePickupRejectsMalformedAvailabilityBeforeHTTP(t *testing.T) {
+	var calls int
+	api := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		calls++
+	}))
+	defer api.Close()
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("FEDEX_DATA_DIR", filepath.Join(t.TempDir(), "fedex"))
+	setMCPTestAuth(t, api.URL)
+	s := server.NewMCPServer("fedex-test", "test")
+	RegisterTools(s)
+	request := validMCPSchedulePickupRequest()
+	address := request["originDetail"].(map[string]any)["pickupLocation"].(map[string]any)["address"]
+	availability := map[string]any{
+		"associatedAccountNumber": "123456789",
+		"carriers":                []any{"FDXG"},
+		"pickupRequestType":       []any{"SAME_DAY"},
+		"countryRelationship":     "DOMESTIC",
+		"dispatchDate":            "2026-09-03",
+		"packageReadyTime":        "09:00:00",
+		"customerCloseTime":       "17:00:00",
+		"pickupAddress":           address,
+		"shipmentAttributes":      map[string]any{},
+	}
+	result, err := s.ListTools()["schedule_pickup"].Handler(context.Background(), toolRequest(map[string]any{"request": request, "availability_request": availability}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("malformed availability request was accepted: %#v", result)
+	}
+	if calls != 0 {
+		t.Fatalf("malformed availability request made %d HTTP calls", calls)
 	}
 }

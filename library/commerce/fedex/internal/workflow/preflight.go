@@ -33,6 +33,9 @@ func ValidatePickupAvailabilityBinding(scheduleRequest, availabilityRequest map[
 	if err := ValidateRequest(ActionSchedulePickup, scheduleRequest); err != nil {
 		return err
 	}
+	if err := ValidatePickupAvailabilityRequest(availabilityRequest); err != nil {
+		return fmt.Errorf("invalid pickup availability request: %w", err)
+	}
 	account := strings.TrimSpace(stringField(availabilityRequest, "associatedAccountNumber"))
 	wantAccount := strings.TrimSpace(nestedString(scheduleRequest, "associatedAccountNumber", "value"))
 	if account == "" || account != wantAccount {

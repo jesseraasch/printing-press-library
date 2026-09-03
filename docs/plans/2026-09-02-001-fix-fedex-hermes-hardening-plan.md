@@ -207,7 +207,7 @@ Not registered by default:
 #### U4. Register only named MCP tools
 
 - [x] Add fixed endpoint handlers for the proposed read-only and mutating tools; deeper request typing remains in Phase 4.
-- [x] Give all four read tools operation-specific required schemas and server-side request validation.
+- [x] Give all four read tools operation-specific required schemas and deep server-side request validation, including official rate controls/grouped-package semantics, conditional address minima and resolution controls, required shipment pickup/total-weight/payment/payor/label fields, and a shared pickup-availability validator used by both direct reads and scheduling preflight.
 - [x] Apply accurate `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint` annotations.
 - [x] Do not register `fedex_execute` in the production/default MCP profile.
 - [x] Do not mirror import, export, SQL, webhook, arbitrary file, ETD, bulk, or tracking-daemon commands into the default MCP surface.

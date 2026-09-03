@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
+
+	"github.com/mvanhorn/printing-press-library/library/commerce/fedex/internal/workflow"
 )
 
 func validateNarrowReadRequest(action string, body map[string]any) error {
@@ -32,11 +35,80 @@ func validateNarrowReadRequest(action string, body map[string]any) error {
 				return fmt.Errorf("requestedShipment.%s.address: %w", partyName, err)
 			}
 		}
-		if err := requireNonblankFields(shipment, "pickupType"); err != nil {
+		if err := requireEnum(shipment, "pickupType", map[string]bool{"CONTACT_FEDEX_TO_SCHEDULE": true, "DROPOFF_AT_FEDEX_LOCATION": true, "USE_SCHEDULED_PICKUP": true}); err != nil {
 			return fmt.Errorf("requestedShipment: %w", err)
 		}
-		if _, err := requiredStringArray(shipment, "rateRequestType", nil); err != nil {
-			return fmt.Errorf("requestedShipment: %w", err)
+		for _, field := range []string{"serviceType", "packagingType"} {
+			if err := validateOptionalNonblankField(shipment, field); err != nil {
+				return fmt.Errorf("requestedShipment: %w", err)
+			}
+		}
+		if _, present := shipment["rateRequestType"]; present {
+			if _, err := requiredStringArray(shipment, "rateRequestType", map[string]bool{"LIST": true, "INCENTIVE": true, "ACCOUNT": true, "PREFERRED": true}); err != nil {
+				return fmt.Errorf("requestedShipment: %w", err)
+			}
+		}
+		if _, present := body["carrierCodes"]; present {
+			if _, err := requiredStringArray(body, "carrierCodes", map[string]bool{"FDXE": true, "FDXG": true, "FXSP": true, "FXCC": true}); err != nil {
+				return err
+			}
+		}
+		pickupDetailPresent := false
+		if rawPickupDetail, present := shipment["pickupDetail"]; present {
+			pickupDetail, ok := rawPickupDetail.(map[string]any)
+			if !ok {
+				return fmt.Errorf("requestedShipment.pickupDetail must be an object")
+			}
+			pickupDetailPresent = true
+			if err := validateOptionalEnumField(pickupDetail, "requestType", map[string]bool{"FUTURE_DAY": true, "SAME_DAY": true}); err != nil {
+				return fmt.Errorf("requestedShipment.pickupDetail: %w", err)
+			}
+			if err := validateOptionalEnumField(pickupDetail, "requestSource", map[string]bool{"AUTOMATION": true, "CUSTOMER_SERVICE": true}); err != nil {
+				return fmt.Errorf("requestedShipment.pickupDetail: %w", err)
+			}
+			for _, field := range []string{"readyDateTime", "latestPickupDateTime"} {
+				if err := validateOptionalDateField(pickupDetail, field); err != nil {
+					return fmt.Errorf("requestedShipment.pickupDetail: %w", err)
+				}
+			}
+			if err := validateOptionalNonblankField(pickupDetail, "courierInstructions"); err != nil {
+				return fmt.Errorf("requestedShipment.pickupDetail: %w", err)
+			}
+			if pickupDetail["requestType"] == "FUTURE_DAY" {
+				if err := requireNonblankFields(pickupDetail, "readyDateTime", "latestPickupDateTime"); err != nil {
+					return fmt.Errorf("requestedShipment.pickupDetail: %w", err)
+				}
+			}
+		}
+		if _, present := body["processingOptions"]; present {
+			if _, err := requiredStringArray(body, "processingOptions", map[string]bool{"INCLUDE_PICKUPRATES": true}); err != nil {
+				return err
+			}
+			if !pickupDetailPresent {
+				return fmt.Errorf("requestedShipment.pickupDetail is required with INCLUDE_PICKUPRATES")
+			}
+		}
+		if rawControls, present := body["rateRequestControlParameters"]; present {
+			controls, ok := rawControls.(map[string]any)
+			if !ok {
+				return fmt.Errorf("rateRequestControlParameters must be an object")
+			}
+			for _, field := range []string{"returnTransitTimes", "servicesNeededOnRateFailure"} {
+				if value, present := controls[field]; present {
+					if _, ok := value.(bool); !ok {
+						return fmt.Errorf("rateRequestControlParameters.%s must be boolean", field)
+					}
+				}
+			}
+			if err := validateOptionalEnumField(controls, "variableOptions", map[string]bool{"SATURDAY_DELIVERY": true, "FREIGHT_GUARANTEE": true, "SMART_POST_ALLOWED_INDICIA": true, "SMARTPOST_HUB_ID": true}); err != nil {
+				return fmt.Errorf("rateRequestControlParameters: %w", err)
+			}
+			if err := validateOptionalEnumField(controls, "rateSortOrder", map[string]bool{"COMMITASCENDING": true, "SERVICENAMETRADITIONAL": true, "COMMITDESCENDING": true}); err != nil {
+				return fmt.Errorf("rateRequestControlParameters: %w", err)
+			}
+		}
+		if count, present := shipment["totalPackageCount"]; present && !positiveIntegerAtMost(count, 100) {
+			return fmt.Errorf("requestedShipment.totalPackageCount must be an integer from 1 through 100 when provided")
 		}
 		return validatePackages(shipment, false)
 	case "validate_address":
@@ -53,8 +125,25 @@ func validateNarrowReadRequest(action string, body map[string]any) error {
 			if !ok || len(address) == 0 {
 				return fmt.Errorf("addressesToValidate[%d].address must be a nonempty object", i)
 			}
-			if err := validatePostalAddress(address, true); err != nil {
+			if err := validateAddressResolutionAddress(address); err != nil {
 				return fmt.Errorf("addressesToValidate[%d].address: %w", i, err)
+			}
+			if err := validateOptionalNonblankField(entry, "clientReferenceId"); err != nil {
+				return fmt.Errorf("addressesToValidate[%d]: %w", i, err)
+			}
+		}
+		if err := validateOptionalNonblankField(body, "inEffectAsOfTimestamp"); err != nil {
+			return err
+		}
+		if rawControls, present := body["validateAddressControlParameters"]; present {
+			controls, ok := rawControls.(map[string]any)
+			if !ok {
+				return fmt.Errorf("validateAddressControlParameters must be an object")
+			}
+			if value, present := controls["includeResolutionTokens"]; present {
+				if _, ok := value.(bool); !ok {
+					return fmt.Errorf("validateAddressControlParameters.includeResolutionTokens must be boolean")
+				}
 			}
 		}
 		return nil
@@ -87,56 +176,59 @@ func validateNarrowReadRequest(action string, body map[string]any) error {
 		if err := requireNonblankFields(shipment, "serviceType", "packagingType"); err != nil {
 			return fmt.Errorf("requestedShipment: %w", err)
 		}
+		totalWeight, ok := numericValue(shipment["totalWeight"])
+		if !ok || math.IsNaN(totalWeight) || math.IsInf(totalWeight, 0) || totalWeight < 1 || totalWeight != math.Trunc(totalWeight) {
+			return fmt.Errorf("requestedShipment.totalWeight must be a positive integer")
+		}
+		if err := requireEnum(shipment, "pickupType", map[string]bool{"CONTACT_FEDEX_TO_SCHEDULE": true, "DROPOFF_AT_FEDEX_LOCATION": true, "USE_SCHEDULED_PICKUP": true}); err != nil {
+			return fmt.Errorf("requestedShipment: %w", err)
+		}
+		payment, err := requiredObject(shipment, "shippingChargesPayment")
+		if err != nil {
+			return fmt.Errorf("requestedShipment: %w", err)
+		}
+		paymentTypes := map[string]bool{"SENDER": true, "RECIPIENT": true, "THIRD_PARTY": true, "COLLECT": true}
+		if err := requireEnum(payment, "paymentType", paymentTypes); err != nil {
+			return fmt.Errorf("requestedShipment.shippingChargesPayment: %w", err)
+		}
+		if payment["paymentType"] == "RECIPIENT" || payment["paymentType"] == "THIRD_PARTY" {
+			payor, err := requiredObject(payment, "payor")
+			if err != nil {
+				return fmt.Errorf("requestedShipment.shippingChargesPayment: %w", err)
+			}
+			responsibleParty, err := requiredObject(payor, "responsibleParty")
+			if err != nil {
+				return fmt.Errorf("requestedShipment.shippingChargesPayment.payor: %w", err)
+			}
+			if err := validateAccountObject(responsibleParty, "accountNumber"); err != nil {
+				return fmt.Errorf("requestedShipment.shippingChargesPayment.payor.responsibleParty: %w", err)
+			}
+		}
+		label, err := requiredObject(shipment, "labelSpecification")
+		if err != nil {
+			return fmt.Errorf("requestedShipment: %w", err)
+		}
+		if err := requireEnum(label, "imageType", map[string]bool{"ZPLII": true, "EPL2": true, "PDF": true, "PNG": true}); err != nil {
+			return fmt.Errorf("requestedShipment.labelSpecification: %w", err)
+		}
+		labelStockTypes := map[string]bool{
+			"PAPER_4X6": true, "STOCK_4X675": true, "PAPER_4X675": true, "PAPER_4X8": true, "PAPER_4X9": true,
+			"PAPER_7X475": true, "PAPER_85X11_BOTTOM_HALF_LABEL": true, "PAPER_85X11_TOP_HALF_LABEL": true, "PAPER_LETTER": true,
+			"STOCK_4X675_LEADING_DOC_TAB": true, "STOCK_4X8": true, "STOCK_4X9_LEADING_DOC_TAB": true, "STOCK_4X6": true,
+			"STOCK_4X675_TRAILING_DOC_TAB": true, "STOCK_4X9_TRAILING_DOC_TAB": true, "STOCK_4X9": true,
+			"STOCK_4X85_TRAILING_DOC_TAB": true, "STOCK_4X105_TRAILING_DOC_TAB": true,
+		}
+		if err := requireEnum(label, "labelStockType", labelStockTypes); err != nil {
+			return fmt.Errorf("requestedShipment.labelSpecification: %w", err)
+		}
+		if format, present := label["labelFormatType"]; present {
+			if err := requireEnum(map[string]any{"labelFormatType": format}, "labelFormatType", map[string]bool{"COMMON2D": true, "LABEL_DATA_ONLY": true}); err != nil {
+				return fmt.Errorf("requestedShipment.labelSpecification: %w", err)
+			}
+		}
 		return validatePackages(shipment, true)
 	case "pickup_availability":
-		address, err := requiredObject(body, "pickupAddress")
-		if err != nil {
-			return err
-		}
-		if err := validatePostalAddress(address, true); err != nil {
-			return fmt.Errorf("pickupAddress: %w", err)
-		}
-		if _, err := requiredStringArray(body, "pickupRequestType", map[string]bool{"SAME_DAY": true, "FUTURE_DAY": true}); err != nil {
-			return err
-		}
-		if _, err := requiredStringArray(body, "carriers", map[string]bool{"FDXE": true, "FDXG": true}); err != nil {
-			return err
-		}
-		if err := requireEnum(body, "countryRelationship", map[string]bool{"DOMESTIC": true, "INTERNATIONAL": true}); err != nil {
-			return err
-		}
-		for _, name := range []string{"dispatchDate", "packageReadyTime", "customerCloseTime"} {
-			if value, present := body[name]; present {
-				text, ok := value.(string)
-				if !ok || strings.TrimSpace(text) == "" {
-					return fmt.Errorf("%s must be a nonempty string when provided", name)
-				}
-			}
-		}
-		if value, present := body["associatedAccountNumber"]; present {
-			text, ok := value.(string)
-			if !ok || strings.TrimSpace(text) == "" {
-				return fmt.Errorf("associatedAccountNumber must be a nonempty string when provided")
-			}
-		}
-		if value, present := body["packageDetails"]; present {
-			packages, ok := anySlice(value)
-			if !ok || len(packages) == 0 {
-				return fmt.Errorf("packageDetails must be a nonempty array when provided")
-			}
-			for index, item := range packages {
-				if _, ok := item.(map[string]any); !ok {
-					return fmt.Errorf("packageDetails[%d] must be an object", index)
-				}
-			}
-		}
-		if value, present := body["numberOfBusinessDays"]; present {
-			number, ok := numericValue(value)
-			if !ok || math.IsNaN(number) || math.IsInf(number, 0) || number < 0 || math.Trunc(number) != number {
-				return fmt.Errorf("numberOfBusinessDays must be a nonnegative integer when provided")
-			}
-		}
-		return nil
+		return workflow.ValidatePickupAvailabilityRequest(body)
 	default:
 		return fmt.Errorf("unsupported read operation %q", action)
 	}
@@ -168,20 +260,93 @@ func requireNonblankFields(value map[string]any, names ...string) error {
 	return nil
 }
 
-func validatePostalAddress(address map[string]any, requireStreet bool) error {
-	fields := []string{"city", "postalCode", "countryCode"}
-	if requireStreet {
-		lines, ok := anySlice(address["streetLines"])
-		if !ok || len(lines) == 0 {
-			return fmt.Errorf("streetLines must contain at least one line")
-		}
-		for _, line := range lines {
-			if text, ok := line.(string); !ok || strings.TrimSpace(text) == "" {
-				return fmt.Errorf("streetLines must contain only nonempty strings")
-			}
+func validateAddressResolutionAddress(address map[string]any) error {
+	if err := validateStreetLines(address); err != nil {
+		return err
+	}
+	if err := requireNonblankFields(address, "countryCode"); err != nil {
+		return err
+	}
+	for _, field := range []string{"city", "stateOrProvinceCode", "postalCode"} {
+		if err := validateOptionalNonblankField(address, field); err != nil {
+			return err
 		}
 	}
-	return requireNonblankFields(address, fields...)
+	if strings.EqualFold(strings.TrimSpace(address["countryCode"].(string)), "US") {
+		postalCode, _ := address["postalCode"].(string)
+		city, _ := address["city"].(string)
+		state, _ := address["stateOrProvinceCode"].(string)
+		if strings.TrimSpace(postalCode) == "" && (strings.TrimSpace(city) == "" || strings.TrimSpace(state) == "") {
+			return fmt.Errorf("US addresses require postalCode or both city and stateOrProvinceCode")
+		}
+	}
+	return nil
+}
+
+func validateShipmentAddress(address map[string]any) error {
+	if err := validateStreetLines(address); err != nil {
+		return err
+	}
+	if err := requireNonblankFields(address, "city", "countryCode"); err != nil {
+		return err
+	}
+	country := strings.ToUpper(strings.TrimSpace(address["countryCode"].(string)))
+	if country == "US" || country == "CA" || country == "PR" {
+		if err := requireNonblankFields(address, "stateOrProvinceCode", "postalCode"); err != nil {
+			return err
+		}
+	}
+	for _, field := range []string{"stateOrProvinceCode", "postalCode"} {
+		if err := validateOptionalNonblankField(address, field); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateStreetLines(address map[string]any) error {
+	lines, ok := anySlice(address["streetLines"])
+	if !ok || len(lines) == 0 {
+		return fmt.Errorf("streetLines must contain at least one line")
+	}
+	for _, line := range lines {
+		if text, ok := line.(string); !ok || strings.TrimSpace(text) == "" {
+			return fmt.Errorf("streetLines must contain only nonempty strings")
+		}
+	}
+	return nil
+}
+
+func validateOptionalNonblankField(value map[string]any, field string) error {
+	if candidate, present := value[field]; present {
+		text, ok := candidate.(string)
+		if !ok || strings.TrimSpace(text) == "" {
+			return fmt.Errorf("%s must be a nonempty string when provided", field)
+		}
+	}
+	return nil
+}
+
+func validateOptionalEnumField(value map[string]any, field string, allowed map[string]bool) error {
+	if _, present := value[field]; !present {
+		return nil
+	}
+	return requireEnum(value, field, allowed)
+}
+
+func validateOptionalDateField(value map[string]any, field string) error {
+	raw, present := value[field]
+	if !present {
+		return nil
+	}
+	text, ok := raw.(string)
+	if !ok || text != strings.TrimSpace(text) {
+		return fmt.Errorf("%s must be a YYYY-MM-DD date when provided", field)
+	}
+	if _, err := time.Parse("2006-01-02", text); err != nil {
+		return fmt.Errorf("%s must be a YYYY-MM-DD date when provided", field)
+	}
+	return nil
 }
 
 func validateParty(party map[string]any) error {
@@ -192,21 +357,32 @@ func validateParty(party map[string]any) error {
 	if err := requireNonblankFields(contact, "phoneNumber"); err != nil {
 		return fmt.Errorf("contact: %w", err)
 	}
+	personName, _ := contact["personName"].(string)
+	companyName, _ := contact["companyName"].(string)
+	if strings.TrimSpace(personName) == "" && strings.TrimSpace(companyName) == "" {
+		return fmt.Errorf("contact requires a nonempty personName or companyName")
+	}
+	for _, field := range []string{"personName", "companyName"} {
+		if err := validateOptionalNonblankField(contact, field); err != nil {
+			return fmt.Errorf("contact: %w", err)
+		}
+	}
 	address, err := requiredObject(party, "address")
 	if err != nil {
 		return err
 	}
-	return validatePostalAddress(address, true)
+	return validateShipmentAddress(address)
 }
 
 func validatePackages(shipment map[string]any, exactlyOne bool) error {
 	packages, ok := anySlice(shipment["requestedPackageLineItems"])
-	if !ok || len(packages) == 0 || (exactlyOne && len(packages) != 1) {
+	if !ok || len(packages) == 0 || (!exactlyOne && len(packages) > 99) || (exactlyOne && len(packages) != 1) {
 		if exactlyOne {
 			return fmt.Errorf("requestedShipment.requestedPackageLineItems must contain exactly one package")
 		}
 		return fmt.Errorf("requestedShipment.requestedPackageLineItems must contain at least one package")
 	}
+	totalGroupedPackages := 0
 	for index, value := range packages {
 		pkg, ok := value.(map[string]any)
 		if !ok {
@@ -223,8 +399,24 @@ func validatePackages(shipment map[string]any, exactlyOne bool) error {
 		if !ok || math.IsNaN(number) || math.IsInf(number, 0) || number <= 0 {
 			return fmt.Errorf("requestedShipment.requestedPackageLineItems[%d].weight.value must be greater than zero", index)
 		}
-		if count, present := pkg["groupPackageCount"]; present && !numericOne(count) {
-			return fmt.Errorf("requestedShipment.requestedPackageLineItems[%d].groupPackageCount must be the integer 1 when provided", index)
+		groupedPackages := 1
+		if count, present := pkg["groupPackageCount"]; present {
+			if exactlyOne && !numericOne(count) {
+				return fmt.Errorf("requestedShipment.requestedPackageLineItems[%d].groupPackageCount must be the integer 1 when provided", index)
+			}
+			if !exactlyOne && !positiveIntegerAtMost(count, 100) {
+				return fmt.Errorf("requestedShipment.requestedPackageLineItems[%d].groupPackageCount must be an integer from 1 through 100 when provided", index)
+			}
+			if !exactlyOne {
+				groupCount, _ := numericValue(count)
+				groupedPackages = int(groupCount)
+			}
+		}
+		if !exactlyOne {
+			totalGroupedPackages += groupedPackages
+			if totalGroupedPackages > 100 {
+				return fmt.Errorf("requestedShipment package groups exceed the 100-package rate limit")
+			}
 		}
 		if sequence, present := pkg["sequenceNumber"]; exactlyOne && present && !numericOne(sequence) {
 			return fmt.Errorf("requestedShipment.requestedPackageLineItems[%d].sequenceNumber must be the integer 1 when provided", index)
@@ -233,6 +425,11 @@ func validatePackages(shipment map[string]any, exactlyOne bool) error {
 	if exactlyOne {
 		if count, present := shipment["totalPackageCount"]; present && !numericOne(count) {
 			return fmt.Errorf("requestedShipment.totalPackageCount must be the integer 1 when provided")
+		}
+	} else if count, present := shipment["totalPackageCount"]; present {
+		totalCount, _ := numericValue(count)
+		if int(totalCount) != totalGroupedPackages {
+			return fmt.Errorf("requestedShipment.totalPackageCount must equal the sum of grouped package counts")
 		}
 	}
 	return nil
@@ -246,8 +443,8 @@ func requiredStringArray(value map[string]any, name string, allowed map[string]b
 	result := make([]string, 0, len(values))
 	for _, item := range values {
 		text, ok := item.(string)
-		text = strings.TrimSpace(text)
-		if !ok || text == "" || (allowed != nil && !allowed[text]) {
+		trimmed := strings.TrimSpace(text)
+		if !ok || text != trimmed || trimmed == "" || (allowed != nil && !allowed[text]) {
 			return nil, fmt.Errorf("%s contains an unsupported value", name)
 		}
 		result = append(result, text)
@@ -257,8 +454,7 @@ func requiredStringArray(value map[string]any, name string, allowed map[string]b
 
 func requireEnum(value map[string]any, name string, allowed map[string]bool) error {
 	text, ok := value[name].(string)
-	text = strings.TrimSpace(text)
-	if !ok || !allowed[text] {
+	if !ok || text != strings.TrimSpace(text) || !allowed[text] {
 		return fmt.Errorf("%s contains an unsupported value", name)
 	}
 	return nil
@@ -302,6 +498,11 @@ func numericValue(value any) (float64, bool) {
 func numericOne(value any) bool {
 	number, ok := numericValue(value)
 	return ok && !math.IsNaN(number) && !math.IsInf(number, 0) && number == 1
+}
+
+func positiveIntegerAtMost(value any, maximum float64) bool {
+	number, ok := numericValue(value)
+	return ok && !math.IsNaN(number) && !math.IsInf(number, 0) && number >= 1 && number <= maximum && number == math.Trunc(number)
 }
 
 func minimizeNarrowReadResponse(action string, data []byte) (any, error) {
