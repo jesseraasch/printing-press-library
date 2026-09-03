@@ -235,8 +235,17 @@ func TestReadToolSchemasExposeOperationSpecificNestedRequirements(t *testing.T) 
 	if slices.Contains(addressRequired, "city") || slices.Contains(addressRequired, "postalCode") {
 		t.Fatalf("address validation incorrectly requires country-specific fields globally: %v", addressRequired)
 	}
-	if _, ok := address["allOf"].([]any); !ok {
+	addressConditionals, ok := address["allOf"].([]any)
+	if !ok || len(addressConditionals) != 1 {
 		t.Fatalf("address validation schema lacks country-conditional requirements: %#v", address)
+	}
+	addressThen := addressConditionals[0].(map[string]any)["then"].(map[string]any)
+	addressAlternatives := addressThen["anyOf"].([]any)
+	postalAlternative := addressAlternatives[0].(map[string]any)
+	postalMinimum := postalAlternative["properties"].(map[string]any)["postalCode"].(map[string]any)["minLength"]
+	postalPattern := postalAlternative["properties"].(map[string]any)["postalCode"].(map[string]any)["pattern"]
+	if postalMinimum != 1 || postalPattern != "\\S" {
+		t.Fatalf("US address conditional does not require a nonempty postal code: %#v", addressThen)
 	}
 	addressControls := addressProperties["validateAddressControlParameters"].(map[string]any)
 	if _, ok := addressControls["properties"].(map[string]any)["includeResolutionTokens"]; !ok {
@@ -254,6 +263,17 @@ func TestReadToolSchemasExposeOperationSpecificNestedRequirements(t *testing.T) 
 	payment := shipment["properties"].(map[string]any)["shippingChargesPayment"].(map[string]any)
 	if _, ok := payment["allOf"].([]any); !ok {
 		t.Fatalf("shipment payment schema lacks conditional payor requirement: %#v", payment)
+	}
+	shipper := shipment["properties"].(map[string]any)["shipper"].(map[string]any)
+	shipperAddress := shipper["properties"].(map[string]any)["address"].(map[string]any)
+	shipmentAddressConditionals := shipperAddress["allOf"].([]any)
+	shipmentAddressThen := shipmentAddressConditionals[0].(map[string]any)["then"].(map[string]any)
+	conditionalAddressProperties := shipmentAddressThen["properties"].(map[string]any)
+	for _, field := range []string{"stateOrProvinceCode", "postalCode"} {
+		fieldSchema := conditionalAddressProperties[field].(map[string]any)
+		if fieldSchema["minLength"] != 1 || fieldSchema["pattern"] != "\\S" {
+			t.Errorf("US/CA/PR shipment address conditional does not require nonempty %s: %#v", field, shipmentAddressThen)
+		}
 	}
 
 	pickupProperties := requestSchemaProperties("pickup_availability")

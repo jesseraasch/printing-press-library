@@ -127,6 +127,8 @@ func malformedReadRequests() []malformedReadRequest {
 		{"rate pickup option missing detail", "get_rates", rateRequestWithoutPickupDetail()},
 		{"rate missing nested address", "get_rates", map[string]any{"accountNumber": map[string]any{"value": "123"}, "requestedShipment": map[string]any{"shipper": map[string]any{}, "recipient": map[string]any{}, "pickupType": "DROPOFF_AT_FEDEX_LOCATION", "rateRequestType": []any{"ACCOUNT"}, "requestedPackageLineItems": []any{map[string]any{"weight": map[string]any{"units": "LB", "value": 1}}}}}},
 		{"address missing street", "validate_address", map[string]any{"addressesToValidate": []any{map[string]any{"address": map[string]any{"countryCode": "US"}}}}},
+		{"address numeric optional city", "validate_address", map[string]any{"addressesToValidate": []any{map[string]any{"address": map[string]any{"streetLines": []any{"20 Rue de la Paix"}, "city": 1, "countryCode": "FR"}}}}},
+		{"address US blank alternatives", "validate_address", map[string]any{"addressesToValidate": []any{map[string]any{"address": map[string]any{"streetLines": []any{"10 FedEx Parkway"}, "city": "", "stateOrProvinceCode": "", "postalCode": "", "countryCode": "US"}}}}},
 		{"address invalid controls", "validate_address", map[string]any{"addressesToValidate": []any{map[string]any{"address": map[string]any{"streetLines": []any{"1 Test Way"}, "postalCode": "78701", "countryCode": "US"}}}, "validateAddressControlParameters": map[string]any{"includeResolutionTokens": "yes"}}},
 		{"shipment missing parties", "validate_shipment", map[string]any{"accountNumber": map[string]any{"value": "123"}, "requestedShipment": map[string]any{"serviceType": "FEDEX_GROUND", "packagingType": "YOUR_PACKAGING", "requestedPackageLineItems": []any{map[string]any{"weight": map[string]any{"units": "LB", "value": 2}}}}}},
 		{"shipment missing pickup type", "validate_shipment", shipmentValidationRequestWithout("pickupType")},
@@ -134,6 +136,8 @@ func malformedReadRequests() []malformedReadRequest {
 		{"shipment zero total weight", "validate_shipment", shipmentValidationRequestWithTotalWeight(0)},
 		{"shipment missing payment", "validate_shipment", shipmentValidationRequestWithout("shippingChargesPayment")},
 		{"shipment third party payment missing payor", "validate_shipment", shipmentValidationRequestWithPayment(map[string]any{"paymentType": "THIRD_PARTY"})},
+		{"shipment numeric optional state", "validate_shipment", shipmentValidationRequestWithAddressField("stateOrProvinceCode", 1)},
+		{"shipment US blank required state", "validate_shipment", shipmentValidationRequestWithAddressField("stateOrProvinceCode", "")},
 		{"shipment missing label specification", "validate_shipment", shipmentValidationRequestWithout("labelSpecification")},
 		{"shipment unknown label stock", "validate_shipment", shipmentValidationRequestWithLabelStock("UNKNOWN")},
 		{"shipment grouped package", "validate_shipment", shipmentValidationRequestWithPackageField("groupPackageCount", 2)},
@@ -176,9 +180,10 @@ func TestValidateNarrowReadRequestAcceptsWellFormedRequests(t *testing.T) {
 
 func TestValidateAddressAcceptsCountrySpecificMinimums(t *testing.T) {
 	addresses := map[string]map[string]any{
-		"US postal":     {"streetLines": []any{"10 FedEx Parkway"}, "postalCode": "38116", "countryCode": "US"},
-		"US city state": {"streetLines": []any{"10 FedEx Parkway"}, "city": "Memphis", "stateOrProvinceCode": "TN", "countryCode": "US"},
-		"non-US common": {"streetLines": []any{"20 Rue de la Paix"}, "countryCode": "FR"},
+		"US postal":             {"streetLines": []any{"10 FedEx Parkway"}, "postalCode": "38116", "countryCode": "US"},
+		"US city state":         {"streetLines": []any{"10 FedEx Parkway"}, "city": "Memphis", "stateOrProvinceCode": "TN", "countryCode": "US"},
+		"non-US common":         {"streetLines": []any{"20 Rue de la Paix"}, "countryCode": "FR"},
+		"non-US optional empty": {"streetLines": []any{"20 Rue de la Paix"}, "city": "", "stateOrProvinceCode": "", "postalCode": "", "countryCode": "FR"},
 	}
 	for name, address := range addresses {
 		t.Run(name, func(t *testing.T) {
@@ -210,7 +215,7 @@ func TestValidateShipmentAcceptsConditionalInternationalAddressAndPayor(t *testi
 		},
 	})
 	shipment := request["requestedShipment"].(map[string]any)
-	address := map[string]any{"streetLines": []any{"20 Rue de la Paix"}, "city": "Paris", "countryCode": "FR"}
+	address := map[string]any{"streetLines": []any{"20 Rue de la Paix"}, "city": "Paris", "stateOrProvinceCode": "", "postalCode": "", "countryCode": "FR"}
 	shipment["shipper"].(map[string]any)["address"] = address
 	shipment["recipients"].([]any)[0].(map[string]any)["address"] = address
 	if err := validateNarrowReadRequest("validate_shipment", request); err != nil {
@@ -322,6 +327,13 @@ func shipmentValidationRequestWithPackageField(field string, value any) map[stri
 func shipmentValidationRequestWithPayment(payment map[string]any) map[string]any {
 	request := testShipmentValidationRequest()
 	request["requestedShipment"].(map[string]any)["shippingChargesPayment"] = payment
+	return request
+}
+
+func shipmentValidationRequestWithAddressField(field string, value any) map[string]any {
+	request := testShipmentValidationRequest()
+	shipment := request["requestedShipment"].(map[string]any)
+	shipment["shipper"].(map[string]any)["address"].(map[string]any)[field] = value
 	return request
 }
 

@@ -268,7 +268,7 @@ func validateAddressResolutionAddress(address map[string]any) error {
 		return err
 	}
 	for _, field := range []string{"city", "stateOrProvinceCode", "postalCode"} {
-		if err := validateOptionalNonblankField(address, field); err != nil {
+		if err := validateOptionalStringField(address, field); err != nil {
 			return err
 		}
 	}
@@ -290,14 +290,14 @@ func validateShipmentAddress(address map[string]any) error {
 	if err := requireNonblankFields(address, "city", "countryCode"); err != nil {
 		return err
 	}
-	country := strings.ToUpper(strings.TrimSpace(address["countryCode"].(string)))
-	if country == "US" || country == "CA" || country == "PR" {
-		if err := requireNonblankFields(address, "stateOrProvinceCode", "postalCode"); err != nil {
+	for _, field := range []string{"stateOrProvinceCode", "postalCode"} {
+		if err := validateOptionalStringField(address, field); err != nil {
 			return err
 		}
 	}
-	for _, field := range []string{"stateOrProvinceCode", "postalCode"} {
-		if err := validateOptionalNonblankField(address, field); err != nil {
+	country := strings.ToUpper(strings.TrimSpace(address["countryCode"].(string)))
+	if country == "US" || country == "CA" || country == "PR" {
+		if err := requireNonblankFields(address, "stateOrProvinceCode", "postalCode"); err != nil {
 			return err
 		}
 	}
@@ -322,6 +322,15 @@ func validateOptionalNonblankField(value map[string]any, field string) error {
 		text, ok := candidate.(string)
 		if !ok || strings.TrimSpace(text) == "" {
 			return fmt.Errorf("%s must be a nonempty string when provided", field)
+		}
+	}
+	return nil
+}
+
+func validateOptionalStringField(value map[string]any, field string) error {
+	if candidate, present := value[field]; present {
+		if _, ok := candidate.(string); !ok {
+			return fmt.Errorf("%s must be a string when provided", field)
 		}
 	}
 	return nil
