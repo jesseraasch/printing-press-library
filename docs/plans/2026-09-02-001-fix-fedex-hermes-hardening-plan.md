@@ -207,6 +207,7 @@ Not registered by default:
 #### U4. Register only named MCP tools
 
 - [x] Add fixed endpoint handlers for the proposed read-only and mutating tools; deeper request typing remains in Phase 4.
+- [x] Give all four read tools operation-specific required schemas and server-side request validation.
 - [x] Apply accurate `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint` annotations.
 - [x] Do not register `fedex_execute` in the production/default MCP profile.
 - [x] Do not mirror import, export, SQL, webhook, arbitrary file, ETD, bulk, or tracking-daemon commands into the default MCP surface.
@@ -248,6 +249,7 @@ Not registered by default:
 
 - [x] Parse FedEx error envelopes into allowlisted fields.
 - [x] Remove or redact recipient address, phone, email, labels, credentials, and upstream echo bodies.
+- [x] Reduce MCP read responses to operation-specific allowlists instead of returning complete decoded FedEx responses.
 - [x] Treat dry-run output as sensitive and return a redacted structured summary rather than the complete request body by default.
 
 **Exit criteria:** Automated tests prove owner-only modes and that sentinel secrets/PII do not appear in normal output, errors, or logs.

@@ -8,6 +8,8 @@
   "reason": "A generic endpoint selector and runtime command mirror cannot be constrained by a Hermes tool allowlist and exposed unrelated file, SQL, import/export, webhook, bulk, and tracking-daemon capabilities.",
   "files": [
     "internal/mcp/narrow.go",
+    "internal/mcp/narrow_read.go",
+    "internal/mcp/narrow_read_test.go",
     "internal/mcp/tools.go",
     "internal/mcp/tools_safety_test.go",
     "internal/mcp/code_orch_writebody_test.go",
@@ -16,5 +18,5 @@
     ".printing-press.json",
     "tools-manifest.json"
   ],
-  "validated_outcome": "Unit and MCP protocol tests assert the exact eight-tool surface and operation-specific read-only, destructive, idempotent, and open-world annotations; fedex_execute and broad CLI mirror tools are absent, metadata matches runtime registration, non-FedEx remote API origins are rejected before credentials can be sent, and mutation results expose only action-specific allowlisted identifiers without labels, URLs, or address/contact fields."
+  "validated_outcome": "Unit and MCP protocol tests assert the exact eight-tool surface, typed required request schemas with server-side validation, and operation-specific read-only, destructive, idempotent, and open-world annotations; fedex_execute and broad CLI mirror tools are absent, metadata matches runtime registration, non-FedEx remote API origins are rejected before credentials can be sent, and responses expose only action-specific allowlisted rate, address-validation, shipment-validity, pickup-window, or mutation receipt fields."
 }

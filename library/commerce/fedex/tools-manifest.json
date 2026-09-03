@@ -8,7 +8,9 @@
         "properties": {
           "request": {
             "type": "object",
-            "description": "Exact FedEx REST request object for this operation."
+            "description": "Exact FedEx REST request object for this operation.",
+            "properties": {"accountNumber": {"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]}, "requestedShipment": {"type": "object", "properties": {"shipper": {"type": "object"}, "recipient": {"type": "object"}, "pickupType": {"type": "string"}, "rateRequestType": {"type": "array", "minItems": 1, "items": {"type": "string"}}, "requestedPackageLineItems": {"type": "array", "minItems": 1, "items": {"type": "object"}}}, "required": ["shipper", "recipient", "pickupType", "rateRequestType", "requestedPackageLineItems"]}, "rateRequestControlParameters": {"type": "object"}, "carrierCodes": {"type": "array", "items": {"type": "string", "enum": ["FDXE", "FDXG"]}}},
+            "required": ["accountNumber", "requestedShipment"]
           }
         },
         "required": ["request"]
@@ -22,7 +24,9 @@
         "properties": {
           "request": {
             "type": "object",
-            "description": "Exact FedEx REST request object for this operation."
+            "description": "Exact FedEx REST request object for this operation.",
+            "properties": {"addressesToValidate": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "properties": {"address": {"type": "object"}}, "required": ["address"]}}, "inEffectAsOfTimestamp": {"type": "string"}, "validateAddressControlParameters": {"type": "object"}},
+            "required": ["addressesToValidate"]
           }
         },
         "required": ["request"]
@@ -36,7 +40,9 @@
         "properties": {
           "request": {
             "type": "object",
-            "description": "Exact FedEx REST request object for this operation."
+            "description": "Exact FedEx REST request object for this operation.",
+            "properties": {"accountNumber": {"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]}, "requestedShipment": {"type": "object", "properties": {"shipper": {"type": "object"}, "recipients": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"type": "object"}}, "serviceType": {"type": "string"}, "packagingType": {"type": "string"}, "requestedPackageLineItems": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"type": "object", "properties": {"groupPackageCount": {"type": "integer", "enum": [1]}}}}}, "required": ["shipper", "recipients", "serviceType", "packagingType", "requestedPackageLineItems"]}},
+            "required": ["accountNumber", "requestedShipment"]
           }
         },
         "required": ["request"]
@@ -50,7 +56,9 @@
         "properties": {
           "request": {
             "type": "object",
-            "description": "Exact FedEx REST request object for this operation."
+            "description": "Exact FedEx REST request object for this operation.",
+            "properties": {"pickupAddress": {"type": "object"}, "dispatchDate": {"type": "string"}, "packageReadyTime": {"type": "string"}, "customerCloseTime": {"type": "string"}, "pickupRequestType": {"type": "array", "items": {"type": "string"}}, "shipmentAttributes": {"type": "object"}, "numberOfBusinessDays": {"type": "integer", "minimum": 0}, "packageDetails": {"type": "object"}, "associatedAccountNumber": {"type": "object", "properties": {"value": {"type": "string"}}, "required": ["value"]}, "carriers": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["FDXE", "FDXG"]}}},
+            "required": ["pickupAddress", "dispatchDate", "packageReadyTime", "customerCloseTime", "associatedAccountNumber", "carriers"]
           }
         },
         "required": ["request"]

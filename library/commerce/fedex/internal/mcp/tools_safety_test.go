@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -78,20 +79,28 @@ func TestRegisterToolsExposesExactNarrowSurface(t *testing.T) {
 	}
 }
 
-func TestWriteToolsExposeTypedWorkflowSchemas(t *testing.T) {
+func TestAllToolsExposeTypedWorkflowSchemas(t *testing.T) {
 	s := server.NewMCPServer("fedex-test", "test")
 	RegisterTools(s)
 	wants := map[string][]string{
-		"create_label":    {"accountNumber", "labelResponseOptions", "requestedShipment"},
-		"cancel_shipment": {"accountNumber", "trackingNumber", "deletionControl"},
-		"schedule_pickup": {"associatedAccountNumber", "originDetail", "totalWeight"},
-		"cancel_pickup":   {"pickupConfirmationCode", "carrierCode", "scheduledDate"},
+		"get_rates":           {"accountNumber", "requestedShipment"},
+		"validate_address":    {"addressesToValidate"},
+		"validate_shipment":   {"accountNumber", "requestedShipment"},
+		"pickup_availability": {"pickupAddress", "dispatchDate", "carriers"},
+		"create_label":        {"accountNumber", "labelResponseOptions", "requestedShipment"},
+		"cancel_shipment":     {"accountNumber", "trackingNumber", "deletionControl"},
+		"schedule_pickup":     {"associatedAccountNumber", "originDetail", "totalWeight"},
+		"cancel_pickup":       {"pickupConfirmationCode", "carrierCode", "scheduledDate"},
 	}
 	requiredWants := map[string][]string{
-		"create_label":    {"labelResponseOptions", "accountNumber", "requestedShipment"},
-		"cancel_shipment": {"accountNumber", "senderCountryCode", "trackingNumber", "deletionControl"},
-		"schedule_pickup": {"associatedAccountNumber", "originDetail", "totalWeight", "packageCount", "carrierCode"},
-		"cancel_pickup":   {"pickupConfirmationCode"},
+		"get_rates":           {"accountNumber", "requestedShipment"},
+		"validate_address":    {"addressesToValidate"},
+		"validate_shipment":   {"accountNumber", "requestedShipment"},
+		"pickup_availability": {"pickupAddress", "dispatchDate", "packageReadyTime", "customerCloseTime", "associatedAccountNumber", "carriers"},
+		"create_label":        {"labelResponseOptions", "accountNumber", "requestedShipment"},
+		"cancel_shipment":     {"accountNumber", "senderCountryCode", "trackingNumber", "deletionControl"},
+		"schedule_pickup":     {"associatedAccountNumber", "originDetail", "totalWeight", "packageCount", "carrierCode"},
+		"cancel_pickup":       {"pickupConfirmationCode"},
 	}
 	for toolName, fields := range wants {
 		registered := s.ListTools()[toolName]
@@ -122,7 +131,13 @@ func TestMCPMetadataMatchesRuntimeToolSurface(t *testing.T) {
 	}
 	var manifest struct {
 		Tools []struct {
-			Name string `json:"name"`
+			Name       string `json:"name"`
+			Parameters struct {
+				Properties map[string]struct {
+					Properties map[string]any `json:"properties"`
+					Required   []string       `json:"required"`
+				} `json:"properties"`
+			} `json:"parameters"`
 		} `json:"tools"`
 	}
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
@@ -131,6 +146,12 @@ func TestMCPMetadataMatchesRuntimeToolSurface(t *testing.T) {
 	names := make([]string, 0, len(manifest.Tools))
 	for _, tool := range manifest.Tools {
 		names = append(names, tool.Name)
+		if slices.Contains([]string{"get_rates", "validate_address", "validate_shipment", "pickup_availability"}, tool.Name) {
+			request := tool.Parameters.Properties["request"]
+			if len(request.Properties) == 0 || len(request.Required) == 0 {
+				t.Errorf("tools-manifest read tool %s must have typed properties and required fields", tool.Name)
+			}
+		}
 	}
 	sort.Strings(names)
 	if strings.Join(names, ",") != strings.Join(expectedNarrowTools, ",") {
@@ -261,7 +282,7 @@ func TestReadOnlyRateToolCallsFedExWithoutMutationConfirmation(t *testing.T) {
 			t.Errorf("path=%q, want rate endpoint", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"output":{"rateReplyDetails":[]}}`))
+		_, _ = w.Write([]byte(`{"output":{"rateReplyDetails":[{"serviceType":"FEDEX_GROUND","ratedShipmentDetails":[{"rateType":"PAYOR_ACCOUNT_PACKAGE","totalNetCharge":12.34,"currency":"USD"}]}]},"messages":[{"code":"UNRELATED","message":"must not escape"}],"requestEcho":{"accountNumber":"123456789"}}`))
 	}))
 	t.Cleanup(api.Close)
 
@@ -272,7 +293,16 @@ func TestReadOnlyRateToolCallsFedExWithoutMutationConfirmation(t *testing.T) {
 	RegisterTools(s)
 	tool := s.ListTools()["get_rates"]
 	result, err := tool.Handler(context.Background(), toolRequest(map[string]any{
-		"request": map[string]any{"accountNumber": map[string]any{"value": "123456789"}},
+		"request": map[string]any{
+			"accountNumber": map[string]any{"value": "123456789"},
+			"requestedShipment": map[string]any{
+				"shipper":                   map[string]any{"address": map[string]any{"postalCode": "90210", "countryCode": "US"}},
+				"recipient":                 map[string]any{"address": map[string]any{"postalCode": "10001", "countryCode": "US"}},
+				"pickupType":                "DROPOFF_AT_FEDEX_LOCATION",
+				"rateRequestType":           []any{"ACCOUNT"},
+				"requestedPackageLineItems": []any{map[string]any{"weight": map[string]any{"units": "LB", "value": 1.0}}},
+			},
+		},
 	}))
 	if err != nil {
 		t.Fatalf("get_rates handler error: %v", err)
@@ -282,6 +312,15 @@ func TestReadOnlyRateToolCallsFedExWithoutMutationConfirmation(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("get_rates emitted %d requests, want 1", calls)
+	}
+	text := toolResultText(t, result)
+	if !strings.Contains(text, `"service_type":"FEDEX_GROUND"`) || !strings.Contains(text, `"total_net_charge":12.34`) {
+		t.Fatalf("get_rates result omitted minimized rate fields: %s", text)
+	}
+	for _, forbidden := range []string{"must not escape", "requestEcho", "123456789"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("get_rates result exposed %q: %s", forbidden, text)
+		}
 	}
 }
 

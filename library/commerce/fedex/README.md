@@ -135,6 +135,7 @@ fedex-pp-cli auth set-token '<short-lived-token>' --expires-in 55m --env sandbox
 
 ## Hardened label and pickup workflows
 
+- The four read-only MCP tools use operation-specific request schemas and server-side validation. Successful responses are reduced to allowlisted rate, resolved-address, shipment-validity, or pickup-window fields rather than returning the complete FedEx response.
 - `shipments create` and MCP `create_label` validate one shipper, one recipient, one package, service, account, `labelResponseOptions=LABEL`, and a PDF label request before creating an approval preview.
 - A confirmed label creation writes exactly one bounded, validated PDF under `$FEDEX_DATA_DIR/labels/` (or the default private data directory) and persists only operational shipment fields. Printing remains a separate operation.
 - `pickups create` and MCP `schedule_pickup` require a successful pickup-availability request during preview. When FedEx availability cannot be used, a nonblank `--availability-override-reason` / `availability_override_reason` is required and bound into the approval digest.

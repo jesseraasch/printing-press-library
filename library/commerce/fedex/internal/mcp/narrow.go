@@ -82,6 +82,14 @@ func registerNarrowTools(s *server.MCPServer) {
 
 func requestSchemaRequired(action string) []string {
 	switch action {
+	case "get_rates":
+		return []string{"accountNumber", "requestedShipment"}
+	case "validate_address":
+		return []string{"addressesToValidate"}
+	case "validate_shipment":
+		return []string{"accountNumber", "requestedShipment"}
+	case "pickup_availability":
+		return []string{"pickupAddress", "dispatchDate", "packageReadyTime", "customerCloseTime", "associatedAccountNumber", "carriers"}
 	case workflow.ActionCreateLabel:
 		return []string{"labelResponseOptions", "accountNumber", "requestedShipment"}
 	case workflow.ActionCancelShipment:
@@ -100,8 +108,50 @@ func requestSchemaProperties(action string) map[string]any {
 	address := map[string]any{"type": "object", "properties": map[string]any{"streetLines": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "city": map[string]any{"type": "string"}, "stateOrProvinceCode": map[string]any{"type": "string"}, "postalCode": map[string]any{"type": "string"}, "countryCode": map[string]any{"type": "string"}}, "required": []string{"streetLines", "city", "postalCode", "countryCode"}}
 	contact := map[string]any{"type": "object", "properties": map[string]any{"personName": map[string]any{"type": "string"}, "companyName": map[string]any{"type": "string"}, "phoneNumber": map[string]any{"type": "string"}}, "required": []string{"phoneNumber"}}
 	party := map[string]any{"type": "object", "properties": map[string]any{"contact": contact, "address": address}, "required": []string{"contact", "address"}}
+	rateAddress := map[string]any{"type": "object", "properties": map[string]any{"postalCode": map[string]any{"type": "string"}, "countryCode": map[string]any{"type": "string"}}, "required": []string{"postalCode", "countryCode"}}
 	weight := map[string]any{"type": "object", "properties": map[string]any{"units": map[string]any{"type": "string"}, "value": map[string]any{"type": "number", "exclusiveMinimum": 0}}, "required": []string{"units", "value"}}
 	switch action {
+	case "get_rates":
+		return map[string]any{
+			"accountNumber": account,
+			"requestedShipment": map[string]any{"type": "object", "properties": map[string]any{
+				"shipper":    map[string]any{"type": "object", "properties": map[string]any{"address": rateAddress}, "required": []string{"address"}},
+				"recipient":  map[string]any{"type": "object", "properties": map[string]any{"address": rateAddress}, "required": []string{"address"}},
+				"pickupType": map[string]any{"type": "string"}, "serviceType": map[string]any{"type": "string"},
+				"rateRequestType":           map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}},
+				"requestedPackageLineItems": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object", "properties": map[string]any{"weight": weight}, "required": []string{"weight"}}},
+			}, "required": []string{"shipper", "recipient", "pickupType", "rateRequestType", "requestedPackageLineItems"}},
+			"rateRequestControlParameters": map[string]any{"type": "object"},
+			"carrierCodes":                 map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG"}}},
+		}
+	case "validate_address":
+		return map[string]any{
+			"addressesToValidate":              map[string]any{"type": "array", "minItems": 1, "maxItems": 100, "items": map[string]any{"type": "object", "properties": map[string]any{"address": address}, "required": []string{"address"}}},
+			"inEffectAsOfTimestamp":            map[string]any{"type": "string"},
+			"validateAddressControlParameters": map[string]any{"type": "object"},
+		}
+	case "validate_shipment":
+		return map[string]any{
+			"accountNumber": account,
+			"requestedShipment": map[string]any{"type": "object", "properties": map[string]any{
+				"shipper": party, "recipients": map[string]any{"type": "array", "minItems": 1, "maxItems": 1, "items": party},
+				"serviceType": map[string]any{"type": "string"}, "packagingType": map[string]any{"type": "string"},
+				"requestedPackageLineItems": map[string]any{"type": "array", "minItems": 1, "maxItems": 1, "items": map[string]any{"type": "object", "properties": map[string]any{"weight": weight, "groupPackageCount": map[string]any{"type": "integer", "enum": []int{1}}}, "required": []string{"weight"}}},
+			}, "required": []string{"shipper", "recipients", "serviceType", "packagingType", "requestedPackageLineItems"}},
+		}
+	case "pickup_availability":
+		return map[string]any{
+			"pickupAddress":           address,
+			"dispatchDate":            map[string]any{"type": "string"},
+			"packageReadyTime":        map[string]any{"type": "string"},
+			"customerCloseTime":       map[string]any{"type": "string"},
+			"pickupRequestType":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"shipmentAttributes":      map[string]any{"type": "object"},
+			"numberOfBusinessDays":    map[string]any{"type": "integer", "minimum": 0},
+			"packageDetails":          map[string]any{"type": "object"},
+			"associatedAccountNumber": account,
+			"carriers":                map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG"}}},
+		}
 	case workflow.ActionCreateLabel:
 		return map[string]any{
 			"labelResponseOptions": map[string]any{"type": "string", "enum": []string{"LABEL"}},
@@ -130,18 +180,29 @@ func makeNarrowReadHandler(operation narrowOperation) server.ToolHandlerFunc {
 		if err != nil {
 			return toolJSONError("invalid_request", err.Error()), nil
 		}
+		if err := validateNarrowReadRequest(operation.action, body); err != nil {
+			return toolJSONError("invalid_request", err.Error()), nil
+		}
 		fedexClient, err := newMCPClient()
 		if err != nil {
 			return toolJSONError("client_setup_error", err.Error()), nil
 		}
 		data, status, err := executeNarrowOperation(fedexClient, operation, body)
 		if err != nil {
-			return toolJSONError("fedex_error", err.Error()), nil
+			var apiErr *client.APIError
+			if errors.As(err, &apiErr) {
+				return toolJSONError("fedex_error", fmt.Sprintf("FedEx rejected %s with HTTP %d", operation.action, apiErr.StatusCode)), nil
+			}
+			return toolJSONError("fedex_error", fmt.Sprintf("FedEx %s request failed", operation.action)), nil
+		}
+		result, err := minimizeNarrowReadResponse(operation.action, data)
+		if err != nil {
+			return toolJSONError("invalid_fedex_response", err.Error()), nil
 		}
 		return toolJSON(map[string]any{
 			"status":      "succeeded",
 			"http_status": status,
-			"data":        decodeJSON(data),
+			"data":        result,
 		}), nil
 	}
 }
