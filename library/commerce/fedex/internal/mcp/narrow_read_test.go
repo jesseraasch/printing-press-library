@@ -142,6 +142,11 @@ func malformedReadRequests() []malformedReadRequest {
 		{"pickup nonobject package detail", "pickup_availability", map[string]any{"pickupAddress": testPickupAvailabilityAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{"FDXG"}, "countryRelationship": "DOMESTIC", "packageDetails": []any{"invalid"}}},
 		{"pickup empty package detail", "pickup_availability", map[string]any{"pickupAddress": testPickupAvailabilityAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{"FDXG"}, "countryRelationship": "DOMESTIC", "packageDetails": []any{map[string]any{}}}},
 		{"pickup empty shipment attributes", "pickup_availability", map[string]any{"pickupAddress": testPickupAvailabilityAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{"FDXG"}, "countryRelationship": "DOMESTIC", "shipmentAttributes": map[string]any{}}},
+		{"pickup numeric city", "pickup_availability", pickupAvailabilityRequestWithAddressField("city", 1)},
+		{"pickup invalid street lines", "pickup_availability", pickupAvailabilityRequestWithAddressField("streetLines", "1 Test Way")},
+		{"pickup invalid residential", "pickup_availability", pickupAvailabilityRequestWithAddressField("residential", "false")},
+		{"pickup invalid classification", "pickup_availability", pickupAvailabilityRequestWithAddressField("addressClassification", "COMMERCIAL")},
+		{"pickup invalid urbanization", "pickup_availability", pickupAvailabilityRequestWithAddressField("urbanizationCode", 1)},
 		{"pickup incomplete dimensions", "pickup_availability", map[string]any{"pickupAddress": testPickupAvailabilityAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{"FDXE"}, "countryRelationship": "INTERNATIONAL", "shipmentAttributes": map[string]any{"serviceType": "INTERNATIONAL_PRIORITY", "dimensions": map[string]any{"length": 1, "units": "IN"}}}},
 		{"pickup wrong account shape", "pickup_availability", map[string]any{"pickupAddress": testPickupAvailabilityAddress(), "pickupRequestType": []any{"SAME_DAY"}, "carriers": []any{"FDXG"}, "countryRelationship": "DOMESTIC", "associatedAccountNumber": map[string]any{"value": "123"}}},
 		{"pickup missing request type", "pickup_availability", map[string]any{"pickupAddress": testPickupAvailabilityAddress(), "carriers": []any{"FDXG"}, "countryRelationship": "DOMESTIC"}},
@@ -363,6 +368,17 @@ func testReadAddress() map[string]any {
 
 func testPickupAvailabilityAddress() map[string]any {
 	return map[string]any{"postalCode": "78701", "countryCode": "US"}
+}
+
+func pickupAvailabilityRequestWithAddressField(field string, value any) map[string]any {
+	address := testPickupAvailabilityAddress()
+	address[field] = value
+	return map[string]any{
+		"pickupAddress":       address,
+		"pickupRequestType":   []any{"SAME_DAY"},
+		"carriers":            []any{"FDXG"},
+		"countryRelationship": "DOMESTIC",
+	}
 }
 
 func testReadParty() map[string]any {

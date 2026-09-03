@@ -115,7 +115,17 @@ func requestSchemaProperties(action string) map[string]any {
 	addressValidationAddress := map[string]any{"type": "object", "properties": addressProperties, "required": []string{"streetLines", "countryCode"}, "allOf": []any{map[string]any{"if": map[string]any{"properties": map[string]any{"countryCode": map[string]any{"enum": []string{"US"}}}}, "then": map[string]any{"anyOf": []any{map[string]any{"required": []string{"postalCode"}}, map[string]any{"required": []string{"city", "stateOrProvinceCode"}}}}}}}
 	shipmentAddress := map[string]any{"type": "object", "properties": addressProperties, "required": []string{"streetLines", "city", "countryCode"}, "allOf": []any{map[string]any{"if": map[string]any{"properties": map[string]any{"countryCode": map[string]any{"enum": []string{"US", "CA", "PR"}}}}, "then": map[string]any{"required": []string{"stateOrProvinceCode", "postalCode"}}}}}
 	operationalAddress := map[string]any{"type": "object", "properties": addressProperties, "required": []string{"streetLines", "city", "stateOrProvinceCode", "postalCode", "countryCode"}}
-	pickupAvailabilityAddress := map[string]any{"type": "object", "properties": addressProperties, "required": []string{"postalCode", "countryCode"}}
+	pickupAvailabilityAddressProperties := map[string]any{
+		"streetLines":           map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "minLength": 3, "maxLength": 35}},
+		"urbanizationCode":      map[string]any{"type": "string"},
+		"city":                  map[string]any{"type": "string"},
+		"stateOrProvinceCode":   map[string]any{"type": "string", "maxLength": 2},
+		"postalCode":            map[string]any{"type": "string"},
+		"countryCode":           map[string]any{"type": "string", "minLength": 2, "maxLength": 2},
+		"residential":           map[string]any{"type": "boolean"},
+		"addressClassification": map[string]any{"type": "string", "enum": []string{"MIXED", "UNKNOWN", "BUSINESS", "RESIDENTIAL"}},
+	}
+	pickupAvailabilityAddress := map[string]any{"type": "object", "properties": pickupAvailabilityAddressProperties, "required": []string{"postalCode", "countryCode"}}
 	contact := map[string]any{"type": "object", "properties": map[string]any{"personName": map[string]any{"type": "string"}, "companyName": map[string]any{"type": "string"}, "phoneNumber": map[string]any{"type": "string"}}, "required": []string{"phoneNumber"}, "anyOf": []any{map[string]any{"required": []string{"personName"}}, map[string]any{"required": []string{"companyName"}}}}
 	party := map[string]any{"type": "object", "properties": map[string]any{"contact": contact, "address": operationalAddress}, "required": []string{"contact", "address"}}
 	shipmentValidationParty := map[string]any{"type": "object", "properties": map[string]any{"contact": contact, "address": shipmentAddress}, "required": []string{"contact", "address"}}
@@ -136,7 +146,7 @@ func requestSchemaProperties(action string) map[string]any {
 	weight := map[string]any{"type": "object", "properties": map[string]any{"units": map[string]any{"type": "string", "enum": []string{"LB", "KG"}}, "value": map[string]any{"type": "number", "exclusiveMinimum": 0}}, "required": []string{"units", "value"}}
 	paymentPayor := map[string]any{"type": "object", "properties": map[string]any{"responsibleParty": map[string]any{"type": "object", "properties": map[string]any{"accountNumber": account}, "required": []string{"accountNumber"}}}, "required": []string{"responsibleParty"}}
 	shippingPayment := map[string]any{"type": "object", "properties": map[string]any{"paymentType": map[string]any{"type": "string", "enum": []string{"SENDER", "RECIPIENT", "THIRD_PARTY", "COLLECT"}}, "payor": paymentPayor}, "required": []string{"paymentType"}, "allOf": []any{map[string]any{"if": map[string]any{"properties": map[string]any{"paymentType": map[string]any{"enum": []string{"RECIPIENT", "THIRD_PARTY"}}}}, "then": map[string]any{"required": []string{"payor"}}}}}
-	dimensions := map[string]any{"type": "object", "properties": map[string]any{"length": map[string]any{"type": "integer", "minimum": 1, "maximum": 999}, "width": map[string]any{"type": "integer", "minimum": 1, "maximum": 999}, "height": map[string]any{"type": "integer", "minimum": 1, "maximum": 999}, "units": map[string]any{"type": "string", "enum": []string{"CM", "IN"}}}, "required": []string{"length", "width", "height", "units"}}
+	dimensions := map[string]any{"type": "object", "properties": map[string]any{"length": map[string]any{"type": "integer", "minimum": 1, "maximum": 999}, "width": map[string]any{"type": "integer", "minimum": 1, "maximum": 999}, "height": map[string]any{"type": "integer", "minimum": 1, "maximum": 999}, "units": map[string]any{"enum": []any{"CM", "IN", "", nil}}}, "required": []string{"length", "width", "height"}}
 	pickupShipmentAttributes := map[string]any{"type": "object", "properties": map[string]any{"serviceType": map[string]any{"type": "string"}, "weight": weight, "packagingType": map[string]any{"type": "string"}, "dimensions": dimensions}, "required": []string{"serviceType"}}
 	pickupPackageDetails := map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object", "properties": map[string]any{"packageSpecialServices": map[string]any{"type": "object", "properties": map[string]any{"specialServiceTypes": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}}}, "required": []string{"specialServiceTypes"}}}, "required": []string{"packageSpecialServices"}}}
 	switch action {

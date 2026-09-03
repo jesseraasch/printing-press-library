@@ -259,9 +259,31 @@ func TestReadToolSchemasExposeOperationSpecificNestedRequirements(t *testing.T) 
 	}
 
 	pickupProperties := requestSchemaProperties("pickup_availability")
+	pickupAddress := pickupProperties["pickupAddress"].(map[string]any)
+	pickupAddressProperties := pickupAddress["properties"].(map[string]any)
+	for _, field := range []string{"streetLines", "urbanizationCode", "city", "stateOrProvinceCode", "postalCode", "countryCode", "residential", "addressClassification"} {
+		if _, ok := pickupAddressProperties[field]; !ok {
+			t.Errorf("pickup address schema does not model %s", field)
+		}
+	}
 	attributes := pickupProperties["shipmentAttributes"].(map[string]any)
 	if !slices.Contains(attributes["required"].([]string), "serviceType") {
 		t.Fatalf("pickup shipmentAttributes does not require serviceType when provided: %#v", attributes)
+	}
+	dimensions := attributes["properties"].(map[string]any)["dimensions"].(map[string]any)
+	dimensionRequired := dimensions["required"].([]string)
+	for _, field := range []string{"length", "width", "height"} {
+		if !slices.Contains(dimensionRequired, field) {
+			t.Errorf("pickup dimensions do not require %s: %v", field, dimensionRequired)
+		}
+	}
+	if slices.Contains(dimensionRequired, "units") {
+		t.Fatalf("pickup dimensions incorrectly require units despite FedEx inch default: %v", dimensionRequired)
+	}
+	units := dimensions["properties"].(map[string]any)["units"].(map[string]any)
+	unitEnum := units["enum"].([]any)
+	if !slices.Contains(unitEnum, any("")) || !slices.Contains(unitEnum, any(nil)) {
+		t.Fatalf("pickup dimension units do not expose blank/null inch defaults: %#v", units)
 	}
 	packageDetails := pickupProperties["packageDetails"].(map[string]any)
 	packageItem := packageDetails["items"].(map[string]any)

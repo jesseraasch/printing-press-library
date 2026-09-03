@@ -24,8 +24,13 @@ func ValidatePickupAvailabilityRequest(request map[string]any) error {
 	if err != nil {
 		return err
 	}
+	// The pickup-availability PickupAddress overlay requires both fields even
+	// though the reusable Address model describes postal codes conditionally.
 	if err := availabilityNonblankFields(address, "postalCode", "countryCode"); err != nil {
 		return fmt.Errorf("pickupAddress: %w", err)
+	}
+	if countryCode := strings.TrimSpace(address["countryCode"].(string)); len(countryCode) != 2 {
+		return fmt.Errorf("pickupAddress.countryCode must contain exactly two characters")
 	}
 	if linesValue, present := address["streetLines"]; present {
 		lines, ok := availabilitySlice(linesValue)
@@ -34,13 +39,27 @@ func ValidatePickupAvailabilityRequest(request map[string]any) error {
 		}
 		for _, line := range lines {
 			text, ok := line.(string)
-			if !ok || strings.TrimSpace(text) == "" {
-				return fmt.Errorf("pickupAddress.streetLines must contain only nonempty strings")
+			length := len(strings.TrimSpace(text))
+			if !ok || length < 3 || length > 35 {
+				return fmt.Errorf("pickupAddress.streetLines must contain only strings between 3 and 35 characters")
 			}
 		}
 	}
-	for _, field := range []string{"city", "stateOrProvinceCode"} {
+	for _, field := range []string{"urbanizationCode", "city", "stateOrProvinceCode"} {
 		if err := availabilityOptionalNonblank(address, field); err != nil {
+			return fmt.Errorf("pickupAddress: %w", err)
+		}
+	}
+	if state, present := address["stateOrProvinceCode"]; present && len(strings.TrimSpace(state.(string))) > 2 {
+		return fmt.Errorf("pickupAddress.stateOrProvinceCode must contain no more than two characters")
+	}
+	if value, present := address["residential"]; present {
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("pickupAddress.residential must be boolean when provided")
+		}
+	}
+	if value, present := address["addressClassification"]; present {
+		if err := availabilityEnum(map[string]any{"addressClassification": value}, "addressClassification", map[string]bool{"MIXED": true, "UNKNOWN": true, "BUSINESS": true, "RESIDENTIAL": true}); err != nil {
 			return fmt.Errorf("pickupAddress: %w", err)
 		}
 	}
@@ -116,8 +135,11 @@ func ValidatePickupAvailabilityRequest(request map[string]any) error {
 			if !ok || len(dimensions) == 0 {
 				return fmt.Errorf("shipmentAttributes.dimensions must be a nonempty object when provided")
 			}
-			if err := availabilityEnum(dimensions, "units", map[string]bool{"CM": true, "IN": true}); err != nil {
-				return fmt.Errorf("shipmentAttributes.dimensions: %w", err)
+			if value, present := dimensions["units"]; present && value != nil {
+				units, ok := value.(string)
+				if !ok || (units != "" && units != "CM" && units != "IN") {
+					return fmt.Errorf("shipmentAttributes.dimensions.units must be CM, IN, blank, null, or omitted")
+				}
 			}
 			for _, field := range []string{"length", "width", "height"} {
 				number, ok := availabilityNumber(dimensions[field])

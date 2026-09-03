@@ -42,6 +42,41 @@ func TestValidatePickupAvailabilityRequestAcceptsNestedExpressDetails(t *testing
 	}
 }
 
+func TestValidatePickupAvailabilityRequestAcceptsOfficialAddressFieldsAndDefaultDimensionUnits(t *testing.T) {
+	base := func() map[string]any {
+		return map[string]any{
+			"pickupAddress": map[string]any{
+				"streetLines":           []any{"10 FedEx Parkway"},
+				"urbanizationCode":      "URB FAIR OAKS",
+				"city":                  "Memphis",
+				"stateOrProvinceCode":   "TN",
+				"postalCode":            "38116",
+				"countryCode":           "US",
+				"residential":           false,
+				"addressClassification": "BUSINESS",
+			},
+			"pickupRequestType":   []any{"FUTURE_DAY"},
+			"carriers":            []any{"FDXE"},
+			"countryRelationship": "DOMESTIC",
+			"shipmentAttributes": map[string]any{
+				"serviceType": "PRIORITY_OVERNIGHT",
+				"dimensions":  map[string]any{"length": 7, "width": 8, "height": 9},
+			},
+		}
+	}
+
+	for _, units := range []any{"", nil} {
+		request := base()
+		request["shipmentAttributes"].(map[string]any)["dimensions"].(map[string]any)["units"] = units
+		if err := ValidatePickupAvailabilityRequest(request); err != nil {
+			t.Fatalf("default dimension units rejected for units %#v: %v", units, err)
+		}
+	}
+	if err := ValidatePickupAvailabilityRequest(base()); err != nil {
+		t.Fatalf("omitted dimension units rejected: %v", err)
+	}
+}
+
 func TestValidatePickupAvailabilityRequestRejectsMalformedNestedDetails(t *testing.T) {
 	base := func() map[string]any {
 		return map[string]any{
@@ -61,6 +96,9 @@ func TestValidatePickupAvailabilityRequestRejectsMalformedNestedDetails(t *testi
 		},
 		"incomplete dimensions": func(request map[string]any) {
 			request["shipmentAttributes"] = map[string]any{"serviceType": "FEDEX_GROUND", "dimensions": map[string]any{"length": 10, "units": "IN"}}
+		},
+		"invalid dimension units": func(request map[string]any) {
+			request["shipmentAttributes"] = map[string]any{"serviceType": "FEDEX_GROUND", "dimensions": map[string]any{"length": 10, "width": 10, "height": 10, "units": "MM"}}
 		},
 		"empty package detail": func(request map[string]any) { request["packageDetails"] = []any{map[string]any{}} },
 		"empty special services": func(request map[string]any) {
