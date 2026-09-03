@@ -41,6 +41,8 @@ type Client struct {
 
 var ErrBoundConfirmationRequired = errors.New("protected FedEx mutation requires a matching consumed operation permit")
 
+const maxResponseBodyBytes int64 = 20 << 20
+
 // APIError carries HTTP status information for structured exit codes.
 type APIError struct {
 	Method     string
@@ -74,7 +76,13 @@ func (e *OutcomeUnknownError) Unwrap() error {
 }
 
 func newHTTPClient(timeout time.Duration, jar http.CookieJar) *http.Client {
-	return &http.Client{Timeout: timeout, Jar: jar}
+	return &http.Client{
+		Timeout: timeout,
+		Jar:     jar,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 func New(cfg *config.Config, timeout time.Duration, rateLimit float64) *Client {
@@ -283,10 +291,24 @@ func (c *Client) do(method, path string, params map[string]string, body any, hea
 			return nil, 0, lastErr
 		}
 
-		respBody, err := io.ReadAll(resp.Body)
+		respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes+1))
 		resp.Body.Close()
+		if err == nil && int64(len(respBody)) > maxResponseBodyBytes {
+			err = fmt.Errorf("response exceeds %d-byte limit", maxResponseBodyBytes)
+		}
 		if err != nil {
 			readErr := fmt.Errorf("reading response: %w", err)
+			// A final 4xx status conclusively rejects the request even if its error
+			// body cannot be read. Do not force mutation reconciliation for a
+			// request that the server explicitly refused.
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				return nil, resp.StatusCode, &APIError{
+					Method:     method,
+					Path:       path,
+					StatusCode: resp.StatusCode,
+					Body:       "response body unavailable",
+				}
+			}
 			if !canRetry {
 				return nil, resp.StatusCode, &OutcomeUnknownError{Method: method, Path: path, StatusCode: resp.StatusCode, Cause: readErr}
 			}
@@ -295,7 +317,7 @@ func (c *Client) do(method, path string, params map[string]string, body any, hea
 		respBody = sanitizeJSONResponse(respBody)
 
 		// Success
-		if resp.StatusCode < 400 {
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			c.limiter.OnSuccess()
 			// Cache-invalidate on successful non-GET requests. The !c.DryRun guard
 			// is structurally redundant (dry-run short-circuits before the retry
@@ -311,6 +333,14 @@ func (c *Client) do(method, path string, params map[string]string, body any, hea
 			Path:       path,
 			StatusCode: resp.StatusCode,
 			Body:       safeAPIErrorBody(respBody),
+		}
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 && !canRetry {
+			return nil, resp.StatusCode, &OutcomeUnknownError{
+				Method:     method,
+				Path:       path,
+				StatusCode: resp.StatusCode,
+				Cause:      apiErr,
+			}
 		}
 
 		// Feed every rate-limit response back into the limiter, but only retry
@@ -526,28 +556,56 @@ func (c *Client) authHeaderForPath(path string) (string, error) {
 	if c.Config == nil {
 		return "", nil
 	}
-	if isTrackPath(path) && trackCredsConfigured(c.Config) {
+	if isTrackPath(path) && (c.Config.TrackAccessToken != "" || trackCredsConfigured(c.Config)) {
+		if c.Config.TrackAccessToken != "" && c.Config.TrackTokenExpiry.IsZero() {
+			return "", fmt.Errorf("refusing to send Track access token without a bounded expiry")
+		}
+		if c.Config.TrackAccessToken != "" && !sameTokenOrigin(c.Config.TrackTokenBaseURL, c.BaseURL) {
+			return "", fmt.Errorf("refusing to send Track access token to a different FedEx environment")
+		}
 		// Track-only project. Mint into the Track token slot.
 		if needsTrackTokenMint(c.Config) {
 			id, secret := resolveTrackCredentials(c.Config)
-			if id != "" && secret != "" {
-				if err := c.mintTrackToken(id, secret); err != nil {
-					return "", err
+			if id == "" || secret == "" {
+				if c.Config.TrackAccessToken != "" {
+					return "", fmt.Errorf("refusing to send expired or expiring Track access token without refresh credentials")
 				}
+				return "", fmt.Errorf("Track OAuth client credentials are incomplete")
+			}
+			if err := c.mintTrackToken(id, secret); err != nil {
+				return "", err
 			}
 		}
 		return c.Config.AuthHeaderForPath(path), nil
 	}
 	// Default pair (Ship/Rate/Address/Pickup/Locations/etc.).
+	if c.Config.AccessToken != "" && c.Config.TokenExpiry.IsZero() {
+		return "", fmt.Errorf("refusing to send access token without a bounded expiry")
+	}
+	if c.Config.AccessToken != "" && !sameTokenOrigin(c.Config.TokenBaseURL, c.BaseURL) {
+		return "", fmt.Errorf("refusing to send access token to a different FedEx environment")
+	}
 	if needsTokenMint(c.Config) {
 		clientID, clientSecret := resolveOAuthCredentials(c.Config)
-		if clientID != "" && clientSecret != "" {
-			if err := c.mintClientCredentialsToken(clientID, clientSecret); err != nil {
-				return "", err
+		if clientID == "" || clientSecret == "" {
+			if c.Config.AccessToken != "" {
+				return "", fmt.Errorf("refusing to send expired or expiring access token without refresh credentials")
 			}
+			if clientID != "" || clientSecret != "" {
+				return "", fmt.Errorf("OAuth client credentials are incomplete")
+			}
+		} else if err := c.mintClientCredentialsToken(clientID, clientSecret); err != nil {
+			return "", err
 		}
 	}
 	return c.Config.AuthHeaderForPath(path), nil
+}
+
+func sameTokenOrigin(tokenBaseURL, requestBaseURL string) bool {
+	normalize := func(value string) string {
+		return strings.ToLower(strings.TrimRight(strings.TrimSpace(value), "/"))
+	}
+	return normalize(tokenBaseURL) != "" && normalize(tokenBaseURL) == normalize(requestBaseURL)
 }
 
 // isTrackPath duplicates the config-package helper because the client must
@@ -569,7 +627,7 @@ func needsTokenMint(cfg *config.Config) bool {
 		return true
 	}
 	if cfg.TokenExpiry.IsZero() {
-		return false
+		return true
 	}
 	return time.Until(cfg.TokenExpiry) < 60*time.Second
 }
@@ -579,7 +637,7 @@ func needsTrackTokenMint(cfg *config.Config) bool {
 		return true
 	}
 	if cfg.TrackTokenExpiry.IsZero() {
-		return false
+		return true
 	}
 	return time.Until(cfg.TrackTokenExpiry) < 60*time.Second
 }
@@ -643,6 +701,7 @@ func (c *Client) mintTrackToken(clientID, clientSecret string) error {
 		return fmt.Errorf("FedEx track auth: response missing access_token")
 	}
 	expiry := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	c.Config.BaseURL = c.BaseURL
 	if err := c.Config.SaveTrackTokens(clientID, clientSecret, tokenResp.AccessToken, expiry); err != nil {
 		return fmt.Errorf("saving track token: %w", err)
 	}
@@ -688,6 +747,7 @@ func (c *Client) mintClientCredentialsToken(clientID, clientSecret string) error
 
 	expiry := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 	c.Config.AuthHeaderVal = "" // force AuthHeader() to use AccessToken path
+	c.Config.BaseURL = c.BaseURL
 	if err := c.Config.SaveTokens(clientID, clientSecret, tokenResp.AccessToken, "", expiry); err != nil {
 		return fmt.Errorf("saving FedEx token: %w", err)
 	}

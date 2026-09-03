@@ -17,8 +17,7 @@ func TestExportFailureDoesNotDestroyExistingFile(t *testing.T) {
 		_, _ = w.Write([]byte(`{"errors":[{"code":"BAD_REQUEST"}]}`))
 	}))
 	defer server.Close()
-	t.Setenv("FEDEX_BASE_URL", server.URL)
-	t.Setenv("FEDEX_API_KEY", "synthetic-token")
+	setCLITestAuth(t, server.URL)
 
 	output := filepath.Join(t.TempDir(), "export.json")
 	if err := os.WriteFile(output, []byte("original export"), 0o600); err != nil {

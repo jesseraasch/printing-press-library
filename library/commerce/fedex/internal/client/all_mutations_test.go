@@ -14,8 +14,10 @@ import (
 func TestEveryMutationRequiresBoundPermit(t *testing.T) {
 	calls := 0
 	c := New(&config.Config{
-		BaseURL:     "https://apis-sandbox.fedex.com",
-		AccessToken: "synthetic-token",
+		BaseURL:      "https://apis-sandbox.fedex.com",
+		AccessToken:  "synthetic-token",
+		TokenBaseURL: "https://apis-sandbox.fedex.com",
+		TokenExpiry:  time.Now().Add(time.Hour),
 	}, time.Second, 0)
 	c.NoCache = true
 	c.cacheDir = ""

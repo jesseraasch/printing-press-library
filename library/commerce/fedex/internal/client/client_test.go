@@ -24,8 +24,10 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func newRetryTestClient(baseURL string) *Client {
 	client := New(&config.Config{
-		BaseURL:     baseURL,
-		AccessToken: "test-access-token",
+		BaseURL:      baseURL,
+		AccessToken:  "test-access-token",
+		TokenBaseURL: baseURL,
+		TokenExpiry:  time.Now().Add(time.Hour),
 	}, time.Second, 0)
 	client.NoCache = true
 	client.cacheDir = ""

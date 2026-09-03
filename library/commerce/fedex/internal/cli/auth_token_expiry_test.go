@@ -13,7 +13,7 @@ func TestSetTokenRequiresBoundedExpiry(t *testing.T) {
 	cmd := newAuthSetTokenCmd(&flags)
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	cmd.SetArgs([]string{"synthetic-token"})
+	cmd.SetArgs([]string{"synthetic-token", "--env", "sandbox"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("set-token accepted a token without an expiry")
 	}
@@ -21,7 +21,7 @@ func TestSetTokenRequiresBoundedExpiry(t *testing.T) {
 	cmd = newAuthSetTokenCmd(&flags)
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	cmd.SetArgs([]string{"synthetic-token", "--expires-in", "55m"})
+	cmd.SetArgs([]string{"synthetic-token", "--expires-in", "55m", "--env", "sandbox"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("set-token with bounded expiry: %v", err)
 	}

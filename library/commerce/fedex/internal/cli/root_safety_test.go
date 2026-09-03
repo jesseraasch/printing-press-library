@@ -47,17 +47,17 @@ func TestShipmentCreateRequiresBoundPreviewBeforeNetwork(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"output":{"transactionShipments":[]}}`))
+		_, _ = w.Write([]byte(`{"transactionId":"tx-create","output":{"transactionShipments":[{"masterTrackingNumber":"123456789012","serviceType":"FEDEX_GROUND","pieceResponses":[{"trackingNumber":"123456789012","packageDocuments":[{"contentType":"application/pdf","docType":"LABEL","encodedLabel":"JVBERi0xLjQKJSVFT0YK"}]}]}]}}`))
 	}))
 	t.Cleanup(api.Close)
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("FEDEX_BASE_URL", api.URL)
-	t.Setenv("FEDEX_API_KEY", "synthetic-test-token")
+	setCLITestAuth(t, api.URL)
 
 	shipmentArgs := []string{
 		"--json",
 		"shipments", "create",
-		"--requested-shipment", `{"serviceType":"FEDEX_GROUND"}`,
+		"--requested-shipment", `{"shipper":{"contact":{"personName":"Sender","phoneNumber":"5550000000"},"address":{"streetLines":["1 Origin St"],"city":"Origin","postalCode":"00000","countryCode":"US"}},"recipients":[{"contact":{"personName":"Recipient","phoneNumber":"5550000001"},"address":{"streetLines":["2 Destination St"],"city":"Destination","postalCode":"00001","countryCode":"US"}}],"serviceType":"FEDEX_GROUND","packagingType":"YOUR_PACKAGING","requestedPackageLineItems":[{"weight":{"units":"LB","value":1}}],"labelSpecification":{"imageType":"PDF"}}`,
+		"--label-response-options", "LABEL",
 		"--account-number", `{"value":"123456789"}`,
 	}
 	var bareFlags rootFlags

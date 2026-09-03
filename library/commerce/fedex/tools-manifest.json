@@ -58,11 +58,11 @@
     },
     {
       "name": "create_label",
-      "description": "Preview or, after bound confirmation, create one FedEx shipment and label.",
+      "description": "Preview or, after bound confirmation, create one FedEx shipment, persist its tracking ledger entry, and write one private PDF label.",
       "parameters": {
         "type": "object",
         "properties": {
-          "request": {"type": "object"},
+          "request": {"type": "object", "properties": {"labelResponseOptions": {"type": "string", "enum": ["LABEL"]}, "accountNumber": {"type": "object"}, "requestedShipment": {"type": "object", "properties": {"requestedPackageLineItems": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"type": "object", "properties": {"groupPackageCount": {"type": "integer", "enum": [1]}}}}}}}, "required": ["labelResponseOptions", "accountNumber", "requestedShipment"]},
           "confirm": {"type": "boolean", "default": false},
           "operation_id": {"type": "string"},
           "confirmation_digest": {"type": "string"}
@@ -76,7 +76,7 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "request": {"type": "object"},
+          "request": {"type": "object", "properties": {"accountNumber": {"type": "object"}, "trackingNumber": {"type": "string"}, "senderCountryCode": {"type": "string"}, "deletionControl": {"type": "string", "enum": ["DELETE_ALL_PACKAGES", "DELETE_ONE_PACKAGE"]}}, "required": ["accountNumber", "trackingNumber", "senderCountryCode", "deletionControl"]},
           "confirm": {"type": "boolean", "default": false},
           "operation_id": {"type": "string"},
           "confirmation_digest": {"type": "string"}
@@ -86,11 +86,13 @@
     },
     {
       "name": "schedule_pickup",
-      "description": "Preview or, after bound confirmation, schedule one FedEx pickup.",
+      "description": "Check availability, then preview or, after bound confirmation, schedule and persist one FedEx pickup.",
       "parameters": {
         "type": "object",
         "properties": {
-          "request": {"type": "object"},
+          "request": {"type": "object", "properties": {"associatedAccountNumber": {"type": "object"}, "carrierCode": {"type": "string", "enum": ["FDXE", "FDXG"]}, "packageCount": {"type": "integer", "minimum": 1}, "totalWeight": {"type": "object"}, "originDetail": {"type": "object"}}, "required": ["associatedAccountNumber", "carrierCode", "packageCount", "totalWeight", "originDetail"]},
+          "availability_request": {"type": "object"},
+          "availability_override_reason": {"type": "string"},
           "confirm": {"type": "boolean", "default": false},
           "operation_id": {"type": "string"},
           "confirmation_digest": {"type": "string"}
@@ -104,7 +106,8 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "request": {"type": "object"},
+          "request": {"type": "object", "properties": {"pickupConfirmationCode": {"type": "string"}, "associatedAccountNumber": {"type": "object"}, "carrierCode": {"type": "string", "enum": ["FDXE", "FDXG"]}, "scheduledDate": {"type": "string"}, "location": {"type": "string"}}, "required": ["pickupConfirmationCode"]},
+          "legacy_reason": {"type": "string"},
           "confirm": {"type": "boolean", "default": false},
           "operation_id": {"type": "string"},
           "confirmation_digest": {"type": "string"}

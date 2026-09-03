@@ -56,6 +56,10 @@ func TestStoreCreateAndConsumeBindsCanonicalWireOperation(t *testing.T) {
 	if permit.Allows("PUT", mutation.Path, mutation.Request) || permit.Allows(mutation.Method, "/pickup/v1/pickups", mutation.Request) {
 		t.Fatal("permit authorized a different wire operation")
 	}
+	permit.Release()
+	if permit.Allows(mutation.Method, mutation.Path, mutation.Request) {
+		t.Fatal("released permit remained usable")
+	}
 	if _, _, err := store.Consume(record.ID, record.ConfirmationDigest, mutation); !errors.Is(err, ErrAlreadyConsumed) {
 		t.Fatalf("second Consume error=%v, want ErrAlreadyConsumed", err)
 	}
@@ -154,6 +158,125 @@ func TestStoreConsumeIsAtomicAcrossConcurrentCallers(t *testing.T) {
 	}
 	if successes != 1 {
 		t.Fatalf("successful consumers=%d, want 1", successes)
+	}
+}
+
+func TestConsumeBindsNonHTTPWorkflowContext(t *testing.T) {
+	store := NewStore(t.TempDir(), time.Minute)
+	mutation := Mutation{
+		Action:  "schedule_pickup",
+		Origin:  "https://apis-sandbox.fedex.com:443",
+		Method:  "POST",
+		Path:    "/pickup/v1/pickups",
+		Request: map[string]any{"carrierCode": "FDXG"},
+		Context: map[string]any{"availability_request_sha256": "original"},
+	}
+	record, err := store.Create(mutation, ReviewSummary{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	mutation.Context = map[string]any{"availability_request_sha256": "substituted"}
+	if _, _, err := store.Consume(record.ID, record.ConfirmationDigest, mutation); !errors.Is(err, ErrRequestMismatch) {
+		t.Fatalf("context substitution error=%v, want ErrRequestMismatch", err)
+	}
+}
+
+func TestCreateBlocksEquivalentOperationWhenOnlyApprovalContextChanges(t *testing.T) {
+	store := NewStore(t.TempDir(), time.Minute)
+	mutation := Mutation{
+		Action:  "schedule_pickup",
+		Origin:  "https://apis-sandbox.fedex.com:443",
+		Method:  "POST",
+		Path:    "/pickup/v1/pickups",
+		Request: map[string]any{"carrierCode": "FDXG", "packageCount": 1},
+		Context: map[string]any{"availability_override_reason": "first review context"},
+	}
+	first, err := store.Create(mutation, ReviewSummary{})
+	if err != nil {
+		t.Fatalf("Create first: %v", err)
+	}
+	mutation.Context = map[string]any{"availability_override_reason": "changed context"}
+	_, err = store.Create(mutation, ReviewSummary{})
+	var equivalent *EquivalentOperationError
+	if !errors.As(err, &equivalent) {
+		t.Fatalf("Create equivalent error=%v, want EquivalentOperationError", err)
+	}
+	if equivalent.ID != first.ID {
+		t.Fatalf("equivalent ID=%q, want %q", equivalent.ID, first.ID)
+	}
+}
+
+func TestOperationHashLockCoversExpiryTransition(t *testing.T) {
+	base := time.Date(2026, 9, 2, 22, 0, 0, 0, time.UTC)
+	store := NewStore(t.TempDir(), time.Minute)
+	store.now = func() time.Time { return base }
+	mutation := testMutation()
+	record, err := store.Create(mutation, ReviewSummary{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	unlock, err := store.lock("request-" + record.OperationHash[:24])
+	if err != nil {
+		t.Fatalf("lock operation hash: %v", err)
+	}
+	store.now = func() time.Time { return record.ExpiresAt.Add(time.Nanosecond) }
+	if _, err := store.Create(mutation, ReviewSummary{}); !errors.Is(err, ErrOperationBusy) {
+		unlock()
+		t.Fatalf("Create while expiry transition lock is held error=%v, want ErrOperationBusy", err)
+	}
+	unlock()
+	reacquired, err := store.lock("request-" + record.OperationHash[:24])
+	if err != nil {
+		t.Fatalf("reacquire released operation lock: %v", err)
+	}
+	reacquired()
+}
+
+func TestConsumeMigratesLegacyOperationHashBeforeExecuting(t *testing.T) {
+	store := NewStore(t.TempDir(), time.Minute)
+	mutation := testMutation()
+	mutation.Context = map[string]any{"availability_request_sha256": "review-only"}
+	record, err := store.Create(mutation, ReviewSummary{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	record.OperationHash = ""
+	if err := store.writeRecord(record); err != nil {
+		t.Fatalf("write legacy record: %v", err)
+	}
+	consumed, permit, err := store.Consume(record.ID, record.ConfirmationDigest, mutation)
+	if err != nil {
+		t.Fatalf("Consume legacy record: %v", err)
+	}
+	defer permit.Release()
+	want, err := hashOperation(mutation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consumed.OperationHash != want {
+		t.Fatalf("migrated operation hash=%q, want %q", consumed.OperationHash, want)
+	}
+}
+
+func TestLegacyUnresolvedRecordBlocksSameActionAndOrigin(t *testing.T) {
+	store := NewStore(t.TempDir(), time.Minute)
+	mutation := testMutation()
+	mutation.Context = map[string]any{"availability_request_sha256": "legacy"}
+	record, err := store.Create(mutation, ReviewSummary{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	record.OperationHash = ""
+	record.Status = StatusOutcomeUnknown
+	if err := store.writeRecord(record); err != nil {
+		t.Fatalf("write legacy record: %v", err)
+	}
+	different := mutation
+	different.Request = map[string]any{"accountNumber": map[string]any{"value": "different"}}
+	_, err = store.Create(different, ReviewSummary{})
+	var equivalent *EquivalentOperationError
+	if !errors.As(err, &equivalent) || equivalent.ID != record.ID {
+		t.Fatalf("Create with legacy unresolved record error=%v, want EquivalentOperationError for %s", err, record.ID)
 	}
 }
 

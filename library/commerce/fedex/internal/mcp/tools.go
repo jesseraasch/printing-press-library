@@ -6,6 +6,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -80,25 +81,27 @@ func makeAPIHandler(method, pathTemplate string, positionalParams []string) serv
 
 		if err != nil {
 			msg := err.Error()
+			var unknown *client.OutcomeUnknownError
+			if errors.As(err, &unknown) {
+				return toolJSONError("outcome_unknown", msg), nil
+			}
 			switch {
-			case strings.Contains(msg, "HTTP 409"):
-				return mcplib.NewToolResultText("already exists (no-op)"), nil
 			case strings.Contains(msg, "HTTP 400") && cliutil.LooksLikeAuthError(msg):
 				return mcplib.NewToolResultError("authentication error: " + cliutil.SanitizeErrorBody(msg) +
 					"\nhint: the API rejected the request — this usually means auth is missing or invalid." +
-					"\n      Set your API key: export FEDEX_API_KEY=<your-key>" +
+					"\n      Provide FEDEX_API_KEY (Client ID) and FEDEX_SECRET_KEY through your secret provider." +
 					"\n      Get a key at: https://developer.fedex.com/api/en-us/get-started.html" +
 					"\n      Run 'fedex-pp-cli doctor' to check auth status."), nil
 			case strings.Contains(msg, "HTTP 401"):
 				return mcplib.NewToolResultError("authentication failed: " + cliutil.SanitizeErrorBody(msg) +
 					"\nhint: check your token." +
-					"\n      Set it with: export FEDEX_API_KEY=<your-key>" +
+					"\n      Provide FEDEX_API_KEY (Client ID) and FEDEX_SECRET_KEY through your secret provider." +
 					"\n      Get a key at: https://developer.fedex.com/api/en-us/get-started.html" +
 					"\n      Run 'fedex-pp-cli doctor' to check auth status."), nil
 			case strings.Contains(msg, "HTTP 403"):
 				return mcplib.NewToolResultError("permission denied: " + cliutil.SanitizeErrorBody(msg) +
 					"\nhint: your credentials are valid but lack access to this resource." +
-					"\n      Set it with: export FEDEX_API_KEY=<your-key>" +
+					"\n      Provide FEDEX_API_KEY (Client ID) and FEDEX_SECRET_KEY through your secret provider." +
 					"\n      Get a key at: https://developer.fedex.com/api/en-us/get-started.html" +
 					"\n      Run 'fedex-pp-cli doctor' to check auth status."), nil
 			case strings.Contains(msg, "HTTP 404"):
@@ -133,9 +136,7 @@ func makeAPIHandler(method, pathTemplate string, positionalParams []string) serv
 }
 
 func newMCPClient() (*client.Client, error) {
-	home, _ := os.UserHomeDir()
-	cfgPath := filepath.Join(home, ".config", "fedex-pp-cli", "config.toml")
-	cfg, err := config.Load(cfgPath)
+	cfg, err := config.Load("")
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}

@@ -11,14 +11,28 @@ import (
 
 	"github.com/mvanhorn/printing-press-library/library/commerce/fedex/internal/approval"
 	"github.com/mvanhorn/printing-press-library/library/commerce/fedex/internal/client"
+	"github.com/mvanhorn/printing-press-library/library/commerce/fedex/internal/workflow"
 	"github.com/spf13/cobra"
 )
 
 const cliPendingOperationTTL = 10 * time.Minute
 
+type protectedMutationOptions struct {
+	Context      any
+	ReviewUpdate func(*approval.ReviewSummary)
+	Persist      workflow.PersistOptions
+}
+
 // executeProtectedMutation implements the CLI's preview -> bound confirmation
 // workflow. A successful preview returns executed=false and never calls FedEx.
 func executeProtectedMutation(cmd *cobra.Command, flags *rootFlags, fedexClient *client.Client, action, method, path string, body map[string]any) ([]byte, int, bool, error) {
+	return executeProtectedMutationWithOptions(cmd, flags, fedexClient, action, method, path, body, protectedMutationOptions{})
+}
+
+func executeProtectedMutationWithOptions(cmd *cobra.Command, flags *rootFlags, fedexClient *client.Client, action, method, path string, body map[string]any, options protectedMutationOptions) ([]byte, int, bool, error) {
+	if err := workflow.ValidateRequest(action, body); err != nil {
+		return nil, 0, false, err
+	}
 	origin, err := approval.NormalizeOrigin(fedexClient.BaseURL)
 	if err != nil {
 		return nil, 0, false, err
@@ -27,14 +41,18 @@ func executeProtectedMutation(cmd *cobra.Command, flags *rootFlags, fedexClient 
 	if err != nil {
 		return nil, 0, false, err
 	}
-	mutation := approval.Mutation{Action: action, Origin: origin, Method: method, Path: path, Request: body}
+	mutation := approval.Mutation{Action: action, Origin: origin, Method: method, Path: path, Request: body, Context: options.Context}
 	store := approval.NewStore(pendingDir, cliPendingOperationTTL)
 
 	if !flags.yes {
 		if strings.TrimSpace(flags.operationID) != "" || strings.TrimSpace(flags.confirmationDigest) != "" {
 			return nil, 0, false, errors.New("--operation-id and --confirmation-digest require --yes")
 		}
-		record, err := store.Create(mutation, approval.Summarize(action, body))
+		summary := approval.Summarize(action, body)
+		if options.ReviewUpdate != nil {
+			options.ReviewUpdate(&summary)
+		}
+		record, err := store.Create(mutation, summary)
 		if err != nil {
 			return nil, 0, false, err
 		}
@@ -64,11 +82,34 @@ func executeProtectedMutation(cmd *cobra.Command, flags *rootFlags, fedexClient 
 	if operationID == "" || digest == "" {
 		return nil, 0, false, errors.New("--yes requires --operation-id and --confirmation-digest from the matching preview")
 	}
-	_, permit, err := store.Consume(operationID, digest, mutation)
+	record, permit, err := store.Consume(operationID, digest, mutation)
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("consume mutation confirmation: %w", err)
 	}
+	defer permit.Release()
+	options.Persist.OperationID = operationID
+	if options.Persist.PickupPreflight == "verified" {
+		options.Persist.PickupPreflightCutoff = record.Review.PickupCutoffTime
+		options.Persist.PickupPreflightAccessStart = record.Review.PickupAccessStart
+	}
+	alreadyComplete, beginErr := workflow.BeginMutation(cmd.Context(), action, body, options.Persist)
+	if beginErr != nil {
+		_ = store.Complete(operationID, approval.StatusRejected, "local_state")
+		return nil, 0, true, fmt.Errorf("prepare local workflow state: %w", beginErr)
+	}
+	if alreadyComplete != nil {
+		data, marshalErr := workflow.MarshalSafeResult(alreadyComplete)
+		if marshalErr != nil {
+			_ = store.Complete(operationID, approval.StatusOutcomeUnknown, "local_persistence")
+			return nil, 0, true, marshalErr
+		}
+		if completeErr := store.Complete(operationID, approval.StatusSucceeded, ""); completeErr != nil {
+			return nil, 0, true, completeErr
+		}
+		return data, 200, true, nil
+	}
 	fedexClient.MutationPermit = permit
+	defer func() { fedexClient.MutationPermit = nil }()
 
 	var data []byte
 	var status int
@@ -93,13 +134,34 @@ func executeProtectedMutation(cmd *cobra.Command, flags *rootFlags, fedexClient 
 		if errors.As(err, &outcomeUnknown) {
 			completionStatus = approval.StatusOutcomeUnknown
 			errorClass = "outcome_unknown"
+			workflow.PersistOutcomeUnknown(cmd.Context(), action, body, options.Persist)
+		} else {
+			workflow.PersistRejected(cmd.Context(), action, body, options.Persist)
+		}
+	} else {
+		result, persistErr := workflow.PersistSuccess(cmd.Context(), action, body, data, options.Persist)
+		if persistErr != nil {
+			completionStatus = approval.StatusOutcomeUnknown
+			errorClass = "local_persistence"
+			err = persistErr
+			if errors.Is(persistErr, workflow.ErrRemoteRejected) {
+				completionStatus = approval.StatusRejected
+				errorClass = "remote_rejected"
+				workflow.PersistRejected(cmd.Context(), action, body, options.Persist)
+			} else {
+				workflow.PersistOutcomeUnknown(cmd.Context(), action, body, options.Persist)
+			}
+		} else if data, persistErr = workflow.MarshalSafeResult(result); persistErr != nil {
+			completionStatus = approval.StatusOutcomeUnknown
+			errorClass = "local_persistence"
+			err = fmt.Errorf("encoding safe workflow result: %w", persistErr)
 		}
 	}
 	if completeErr := store.Complete(operationID, completionStatus, errorClass); completeErr != nil {
 		if err != nil {
 			return nil, status, true, errors.Join(err, fmt.Errorf("persist completion status: %w", completeErr))
 		}
-		return data, status, true, fmt.Errorf("remote mutation succeeded but completion status could not be persisted: %w", completeErr)
+		return data, status, true, fmt.Errorf("remote mutation succeeded but completion status could not be persisted; do not retry before reconciliation: %w", completeErr)
 	}
 	return data, status, true, err
 }

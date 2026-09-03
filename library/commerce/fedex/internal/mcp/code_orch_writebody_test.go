@@ -68,8 +68,7 @@ func TestCodeOrchExecuteRequiresConfirmationBeforeShipment(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("FEDEX_BASE_URL", server.URL)
-	t.Setenv("FEDEX_API_KEY", "synthetic-test-token")
+	setMCPTestAuth(t, server.URL)
 
 	params := map[string]any{
 		"accountNumber": map[string]any{"value": "synthetic-account"},
@@ -108,8 +107,7 @@ func TestGenericAPIHandlerRequiresConfirmationBeforeMutation(t *testing.T) {
 	defer server.Close()
 
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("FEDEX_BASE_URL", server.URL)
-	t.Setenv("FEDEX_API_KEY", "synthetic-test-token")
+	setMCPTestAuth(t, server.URL)
 
 	request := mcplib.CallToolRequest{Params: mcplib.CallToolParams{Arguments: map[string]any{
 		"accountNumber":  map[string]any{"value": "synthetic-account"},

@@ -16,6 +16,7 @@ import (
 
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/mvanhorn/printing-press-library/library/commerce/fedex/internal/store"
 )
 
 var expectedNarrowTools = []string{
@@ -77,6 +78,43 @@ func TestRegisterToolsExposesExactNarrowSurface(t *testing.T) {
 	}
 }
 
+func TestWriteToolsExposeTypedWorkflowSchemas(t *testing.T) {
+	s := server.NewMCPServer("fedex-test", "test")
+	RegisterTools(s)
+	wants := map[string][]string{
+		"create_label":    {"accountNumber", "labelResponseOptions", "requestedShipment"},
+		"cancel_shipment": {"accountNumber", "trackingNumber", "deletionControl"},
+		"schedule_pickup": {"associatedAccountNumber", "originDetail", "totalWeight"},
+		"cancel_pickup":   {"pickupConfirmationCode", "carrierCode", "scheduledDate"},
+	}
+	requiredWants := map[string][]string{
+		"create_label":    {"labelResponseOptions", "accountNumber", "requestedShipment"},
+		"cancel_shipment": {"accountNumber", "senderCountryCode", "trackingNumber", "deletionControl"},
+		"schedule_pickup": {"associatedAccountNumber", "originDetail", "totalWeight", "packageCount", "carrierCode"},
+		"cancel_pickup":   {"pickupConfirmationCode"},
+	}
+	for toolName, fields := range wants {
+		registered := s.ListTools()[toolName]
+		requestSchema, ok := registered.Tool.InputSchema.Properties["request"].(map[string]any)
+		if !ok {
+			t.Fatalf("tool %s request schema=%#v", toolName, registered.Tool.InputSchema.Properties["request"])
+		}
+		properties, ok := requestSchema["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("tool %s request properties=%#v", toolName, requestSchema["properties"])
+		}
+		for _, field := range fields {
+			if _, ok := properties[field]; !ok {
+				t.Errorf("tool %s request schema missing %s", toolName, field)
+			}
+		}
+		required, ok := requestSchema["required"].([]string)
+		if !ok || strings.Join(required, ",") != strings.Join(requiredWants[toolName], ",") {
+			t.Errorf("tool %s request required=%#v, want %v", toolName, requestSchema["required"], requiredWants[toolName])
+		}
+	}
+}
+
 func TestMCPMetadataMatchesRuntimeToolSurface(t *testing.T) {
 	manifestData, err := os.ReadFile("../../tools-manifest.json")
 	if err != nil {
@@ -125,15 +163,14 @@ func TestCreateLabelRequiresPreviewAndBoundConfirmation(t *testing.T) {
 			t.Fatalf("read request body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"output":{"transactionShipments":[{"masterTrackingNumber":"synthetic"}]}}`))
+		_, _ = w.Write([]byte(`{"transactionId":"tx-create","output":{"transactionShipments":[{"masterTrackingNumber":"123456789012","serviceType":"FEDEX_GROUND","pieceResponses":[{"trackingNumber":"123456789012","packageDocuments":[{"contentType":"application/pdf","docType":"LABEL","encodedLabel":"JVBERi0xLjQKJSVFT0YK"}]}]}]}}`))
 	}))
 	t.Cleanup(api.Close)
 
 	dataDir := filepath.Join(t.TempDir(), "fedex")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("FEDEX_DATA_DIR", dataDir)
-	t.Setenv("FEDEX_BASE_URL", api.URL)
-	t.Setenv("FEDEX_API_KEY", "synthetic-test-token")
+	setMCPTestAuth(t, api.URL)
 
 	s := server.NewMCPServer("fedex-test", "test")
 	RegisterTools(s)
@@ -141,12 +178,7 @@ func TestCreateLabelRequiresPreviewAndBoundConfirmation(t *testing.T) {
 	if !ok {
 		t.Fatal("create_label tool is not registered")
 	}
-	request := map[string]any{
-		"accountNumber": map[string]any{"value": "123456789"},
-		"requestedShipment": map[string]any{
-			"serviceType": "FEDEX_GROUND",
-		},
-	}
+	request := validMCPCreateLabelRequest()
 
 	preview, err := tool.Handler(context.Background(), toolRequest(map[string]any{"request": request}))
 	if err != nil {
@@ -188,6 +220,21 @@ func TestCreateLabelRequiresPreviewAndBoundConfirmation(t *testing.T) {
 	if len(gotBody) == 0 || gotBody[0] != '{' {
 		t.Fatalf("confirmed mutation body=%q, want JSON object", gotBody)
 	}
+	if strings.Contains(toolResultText(t, confirmed), "encodedLabel") {
+		t.Fatal("confirmed result exposed encoded label data")
+	}
+	ledger, err := store.Open(store.DefaultPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	shipment, err := ledger.GetShipmentByTracking(context.Background(), "123456789012")
+	_ = ledger.Close()
+	if err != nil || shipment == nil || shipment.TransactionID != "tx-create" {
+		t.Fatalf("shipment=%+v err=%v", shipment, err)
+	}
+	if info, err := os.Stat(shipment.LabelPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("label info=%v err=%v", info, err)
+	}
 
 	replayed, err := tool.Handler(context.Background(), toolRequest(map[string]any{
 		"request":             request,
@@ -219,8 +266,7 @@ func TestReadOnlyRateToolCallsFedExWithoutMutationConfirmation(t *testing.T) {
 	t.Cleanup(api.Close)
 
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("FEDEX_BASE_URL", api.URL)
-	t.Setenv("FEDEX_API_KEY", "synthetic-test-token")
+	setMCPTestAuth(t, api.URL)
 
 	s := server.NewMCPServer("fedex-test", "test")
 	RegisterTools(s)
@@ -250,18 +296,13 @@ func TestConfirmedMutation500IsOutcomeUnknownAndNotRetried(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "fedex")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("FEDEX_DATA_DIR", dataDir)
-	t.Setenv("FEDEX_BASE_URL", api.URL)
-	t.Setenv("FEDEX_API_KEY", "synthetic-test-token")
+	setMCPTestAuth(t, api.URL)
 
 	s := server.NewMCPServer("fedex-test", "test")
 	RegisterTools(s)
 	tool := s.ListTools()["schedule_pickup"]
-	request := map[string]any{
-		"associatedAccountNumber": map[string]any{"value": "123456789"},
-		"carrierCode":             "FDXG",
-		"packageCount":            1,
-	}
-	preview, err := tool.Handler(context.Background(), toolRequest(map[string]any{"request": request}))
+	request := validMCPSchedulePickupRequest()
+	preview, err := tool.Handler(context.Background(), toolRequest(map[string]any{"request": request, "availability_override_reason": "synthetic test override"}))
 	if err != nil || preview == nil || preview.IsError {
 		t.Fatalf("preview result=%#v err=%v", preview, err)
 	}
@@ -274,10 +315,11 @@ func TestConfirmedMutation500IsOutcomeUnknownAndNotRetried(t *testing.T) {
 	}
 
 	result, err := tool.Handler(context.Background(), toolRequest(map[string]any{
-		"request":             request,
-		"confirm":             true,
-		"operation_id":        pending.OperationID,
-		"confirmation_digest": pending.ConfirmationDigest,
+		"request":                      request,
+		"availability_override_reason": "synthetic test override",
+		"confirm":                      true,
+		"operation_id":                 pending.OperationID,
+		"confirmation_digest":          pending.ConfirmationDigest,
 	}))
 	if err != nil {
 		t.Fatalf("confirmed handler error: %v", err)
@@ -315,6 +357,26 @@ func TestConfirmedMutation500IsOutcomeUnknownAndNotRetried(t *testing.T) {
 	}
 	if record.Status != "outcome_unknown" {
 		t.Fatalf("pending record status=%q, want outcome_unknown", record.Status)
+	}
+	ledger, err := store.Open(store.DefaultPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pickup, err := ledger.GetPickupByOperationID(context.Background(), pending.OperationID)
+	_ = ledger.Close()
+	if err != nil || pickup == nil || pickup.Status != "outcome_unknown" {
+		t.Fatalf("pickup=%+v err=%v", pickup, err)
+	}
+	retryPreview, err := tool.Handler(context.Background(), toolRequest(map[string]any{"request": request, "availability_override_reason": "synthetic test override"}))
+	if err != nil || retryPreview == nil || !retryPreview.IsError {
+		t.Fatalf("equivalent retry preview=%#v err=%v, want blocked", retryPreview, err)
+	}
+	retryText := toolResultText(t, retryPreview)
+	if !strings.Contains(retryText, pending.OperationID) || !strings.Contains(retryText, "outcome_unknown") {
+		t.Fatalf("blocked retry omitted reconciliation identity: %s", retryText)
+	}
+	if calls != 1 {
+		t.Fatalf("blocked retry emitted %d requests, want 1 total", calls)
 	}
 }
 

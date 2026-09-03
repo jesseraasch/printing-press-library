@@ -14,6 +14,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/mvanhorn/printing-press-library/library/commerce/fedex/internal/approval"
 	"github.com/mvanhorn/printing-press-library/library/commerce/fedex/internal/client"
+	"github.com/mvanhorn/printing-press-library/library/commerce/fedex/internal/workflow"
 )
 
 const pendingOperationTTL = 10 * time.Minute
@@ -34,9 +35,9 @@ var narrowOperations = []narrowOperation{
 	{name: "validate_address", action: "validate_address", method: "POST", path: "/address/v1/addresses/resolve", readOnly: true, description: "Validate and standardize an address with FedEx. This may be billable, is never retried automatically, and does not create a shipment."},
 	{name: "validate_shipment", action: "validate_shipment", method: "POST", path: "/ship/v1/shipments/packages/validate", readOnly: true, idempotent: true, description: "Validate a single-package shipment request without creating a shipment or label."},
 	{name: "pickup_availability", action: "pickup_availability", method: "POST", path: "/pickup/v1/pickups/availabilities", readOnly: true, idempotent: true, description: "Check FedEx Express or Ground pickup availability without scheduling a pickup."},
-	{name: "create_label", action: "create_label", method: "POST", path: "/ship/v1/shipments", description: "Preview or, after bound confirmation, create one FedEx shipment and label. First call returns a pending operation; confirmation must repeat the exact request."},
+	{name: "create_label", action: "create_label", method: "POST", path: "/ship/v1/shipments", description: "Preview or, after bound confirmation, create one FedEx shipment, persist its tracking ledger entry, and write one private PDF label."},
 	{name: "cancel_shipment", action: "cancel_shipment", method: "PUT", path: "/ship/v1/shipments/cancel", destructive: true, description: "Preview or, after bound confirmation, cancel one FedEx shipment. First call returns a pending operation; confirmation must repeat the exact request."},
-	{name: "schedule_pickup", action: "schedule_pickup", method: "POST", path: "/pickup/v1/pickups", description: "Preview or, after bound confirmation, schedule one FedEx pickup. First call returns a pending operation; confirmation must repeat the exact request."},
+	{name: "schedule_pickup", action: "schedule_pickup", method: "POST", path: "/pickup/v1/pickups", description: "Check availability, then preview or, after bound confirmation, schedule and persist one FedEx pickup."},
 	{name: "cancel_pickup", action: "cancel_pickup", method: "PUT", path: "/pickup/v1/pickups/cancel", destructive: true, description: "Preview or, after bound confirmation, cancel one FedEx pickup. First call returns a pending operation; confirmation must repeat the exact request."},
 }
 
@@ -45,7 +46,7 @@ func registerNarrowTools(s *server.MCPServer) {
 		op := operation
 		options := []mcplib.ToolOption{
 			mcplib.WithDescription(op.description),
-			mcplib.WithObject("request", mcplib.Required(), mcplib.Description("Exact FedEx REST request object for this operation.")),
+			mcplib.WithObject("request", mcplib.Required(), mcplib.Description("Exact FedEx REST request object for this operation."), mcplib.Properties(requestSchemaProperties(op.action))),
 			mcplib.WithReadOnlyHintAnnotation(op.readOnly),
 			mcplib.WithDestructiveHintAnnotation(op.destructive),
 			mcplib.WithIdempotentHintAnnotation(op.idempotent),
@@ -58,11 +59,68 @@ func registerNarrowTools(s *server.MCPServer) {
 				mcplib.WithString("confirmation_digest", mcplib.Description("SHA-256 confirmation digest returned by the preview call.")),
 			)
 		}
+		if op.action == workflow.ActionSchedulePickup {
+			options = append(options,
+				mcplib.WithObject("availability_request", mcplib.Description("FedEx pickup availability request verified during preview; repeat it unchanged for confirmation.")),
+				mcplib.WithString("availability_override_reason", mcplib.Description("Documented reason to bypass availability preflight when an availability request cannot be used.")),
+			)
+		}
+		if op.action == workflow.ActionCancelPickup {
+			options = append(options, mcplib.WithString("legacy_reason", mcplib.Description("Required reason when cancelling a pickup not found in the local ledger.")))
+		}
 		handler := makeNarrowReadHandler(op)
 		if !op.readOnly {
 			handler = makeNarrowMutationHandler(op)
 		}
-		s.AddTool(mcplib.NewTool(op.name, options...), handler)
+		tool := mcplib.NewTool(op.name, options...)
+		if requestSchema, ok := tool.InputSchema.Properties["request"].(map[string]any); ok {
+			requestSchema["required"] = requestSchemaRequired(op.action)
+		}
+		s.AddTool(tool, handler)
+	}
+}
+
+func requestSchemaRequired(action string) []string {
+	switch action {
+	case workflow.ActionCreateLabel:
+		return []string{"labelResponseOptions", "accountNumber", "requestedShipment"}
+	case workflow.ActionCancelShipment:
+		return []string{"accountNumber", "senderCountryCode", "trackingNumber", "deletionControl"}
+	case workflow.ActionSchedulePickup:
+		return []string{"associatedAccountNumber", "originDetail", "totalWeight", "packageCount", "carrierCode"}
+	case workflow.ActionCancelPickup:
+		return []string{"pickupConfirmationCode"}
+	default:
+		return nil
+	}
+}
+
+func requestSchemaProperties(action string) map[string]any {
+	account := map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}}, "required": []string{"value"}}
+	address := map[string]any{"type": "object", "properties": map[string]any{"streetLines": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "city": map[string]any{"type": "string"}, "stateOrProvinceCode": map[string]any{"type": "string"}, "postalCode": map[string]any{"type": "string"}, "countryCode": map[string]any{"type": "string"}}, "required": []string{"streetLines", "city", "postalCode", "countryCode"}}
+	contact := map[string]any{"type": "object", "properties": map[string]any{"personName": map[string]any{"type": "string"}, "companyName": map[string]any{"type": "string"}, "phoneNumber": map[string]any{"type": "string"}}, "required": []string{"phoneNumber"}}
+	party := map[string]any{"type": "object", "properties": map[string]any{"contact": contact, "address": address}, "required": []string{"contact", "address"}}
+	weight := map[string]any{"type": "object", "properties": map[string]any{"units": map[string]any{"type": "string"}, "value": map[string]any{"type": "number", "exclusiveMinimum": 0}}, "required": []string{"units", "value"}}
+	switch action {
+	case workflow.ActionCreateLabel:
+		return map[string]any{
+			"labelResponseOptions": map[string]any{"type": "string", "enum": []string{"LABEL"}},
+			"accountNumber":        account,
+			"requestedShipment": map[string]any{"type": "object", "properties": map[string]any{
+				"shipper": party, "recipients": map[string]any{"type": "array", "minItems": 1, "maxItems": 1, "items": party},
+				"serviceType": map[string]any{"type": "string"}, "packagingType": map[string]any{"type": "string"},
+				"requestedPackageLineItems": map[string]any{"type": "array", "minItems": 1, "maxItems": 1, "items": map[string]any{"type": "object", "properties": map[string]any{"weight": weight, "groupPackageCount": map[string]any{"type": "integer", "enum": []int{1}}}, "required": []string{"weight"}}},
+				"labelSpecification":        map[string]any{"type": "object", "properties": map[string]any{"imageType": map[string]any{"type": "string", "enum": []string{"PDF"}}, "labelStockType": map[string]any{"type": "string"}}, "required": []string{"imageType"}},
+			}, "required": []string{"shipper", "recipients", "serviceType", "packagingType", "requestedPackageLineItems", "labelSpecification"}},
+		}
+	case workflow.ActionCancelShipment:
+		return map[string]any{"accountNumber": account, "trackingNumber": map[string]any{"type": "string"}, "senderCountryCode": map[string]any{"type": "string"}, "deletionControl": map[string]any{"type": "string", "enum": []string{"DELETE_ALL_PACKAGES", "DELETE_ONE_PACKAGE"}}}
+	case workflow.ActionSchedulePickup:
+		return map[string]any{"associatedAccountNumber": account, "carrierCode": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG"}}, "packageCount": map[string]any{"type": "integer", "minimum": 1}, "totalWeight": weight, "originDetail": map[string]any{"type": "object", "properties": map[string]any{"pickupLocation": map[string]any{"type": "object", "properties": map[string]any{"contact": contact, "address": address}, "required": []string{"contact", "address"}}, "readyDateTimestamp": map[string]any{"type": "string"}, "customerCloseTime": map[string]any{"type": "string"}}, "required": []string{"pickupLocation", "readyDateTimestamp", "customerCloseTime"}}}
+	case workflow.ActionCancelPickup:
+		return map[string]any{"pickupConfirmationCode": map[string]any{"type": "string"}, "associatedAccountNumber": account, "carrierCode": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG"}}, "scheduledDate": map[string]any{"type": "string"}, "location": map[string]any{"type": "string"}}
+	default:
+		return map[string]any{}
 	}
 }
 
@@ -89,32 +147,75 @@ func makeNarrowReadHandler(operation narrowOperation) server.ToolHandlerFunc {
 }
 
 func makeNarrowMutationHandler(operation narrowOperation) server.ToolHandlerFunc {
-	return func(_ context.Context, request mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
+	return func(ctx context.Context, request mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 		body, err := requestObject(request)
 		if err != nil {
+			return toolJSONError("invalid_request", err.Error()), nil
+		}
+		arguments := request.GetArguments()
+		var resolvedContext any
+		if operation.action == workflow.ActionCancelPickup {
+			resolved, err := workflow.ResolvePickupCancellation(ctx, body, stringArgument(arguments, "legacy_reason"))
+			if errors.Is(err, workflow.ErrAlreadyCancelled) {
+				return toolJSON(map[string]any{"status": "already_cancelled", "action": operation.action}), nil
+			}
+			if err != nil {
+				return toolJSONError("pickup_resolution_failed", err.Error()), nil
+			}
+			body = resolved.Body
+			resolvedContext = resolved.Context
+		}
+		if err := workflow.ValidateRequest(operation.action, body); err != nil {
 			return toolJSONError("invalid_request", err.Error()), nil
 		}
 		fedexClient, err := newMCPClient()
 		if err != nil {
 			return toolJSONError("client_setup_error", err.Error()), nil
 		}
+		confirm, _ := arguments["confirm"].(bool)
+		persistOptions := workflow.PersistOptions{}
+		approvalContext := resolvedContext
+		review := approval.Summarize(operation.action, body)
+		if operation.action == workflow.ActionSchedulePickup {
+			availabilityRequest, err := optionalObjectArgument(arguments, "availability_request")
+			if err != nil {
+				return toolJSONError("invalid_request", err.Error()), nil
+			}
+			if len(availabilityRequest) > 0 {
+				if err := workflow.ValidatePickupAvailabilityBinding(body, availabilityRequest); err != nil {
+					return toolJSONError("pickup_preflight_mismatch", err.Error()), nil
+				}
+			}
+			preflight, err := workflow.PreparePickupPreflight(fedexClient, confirm, availabilityRequest, stringArgument(arguments, "availability_override_reason"))
+			if err != nil {
+				return toolJSONError("pickup_preflight_failed", err.Error()), nil
+			}
+			approvalContext = preflight.Context
+			persistOptions.PickupPreflight = preflight.Status
+			persistOptions.PickupOverrideReason = preflight.OverrideReason
+			persistOptions.PickupPreflightCutoff = preflight.CutoffTime
+			persistOptions.PickupPreflightAccessStart = preflight.AccessStart
+			review.PickupPreflight = preflight.Status
+			review.PreflightOverride = preflight.OverrideReason
+			review.PickupWindow = preflight.Window
+			review.PickupCutoffTime = preflight.CutoffTime
+			review.PickupAccessStart = preflight.AccessStart
+		}
 		origin, err := approval.NormalizeOrigin(fedexClient.BaseURL)
 		if err != nil {
 			return toolJSONError("client_setup_error", err.Error()), nil
 		}
-		mutation := approval.Mutation{Action: operation.action, Origin: origin, Method: operation.method, Path: operation.path, Request: body}
+		mutation := approval.Mutation{Action: operation.action, Origin: origin, Method: operation.method, Path: operation.path, Request: body, Context: approvalContext}
 		pendingDir, err := approval.DefaultStoreDir()
 		if err != nil {
 			return toolJSONError("local_state_error", err.Error()), nil
 		}
-		store := approval.NewStore(pendingDir, pendingOperationTTL)
-		arguments := request.GetArguments()
-		confirm, _ := arguments["confirm"].(bool)
+		approvalStore := approval.NewStore(pendingDir, pendingOperationTTL)
 		if !confirm {
 			if stringArgument(arguments, "operation_id") != "" || stringArgument(arguments, "confirmation_digest") != "" {
 				return toolJSONError("confirmation_invalid", "operation_id and confirmation_digest require confirm=true"), nil
 			}
-			record, err := store.Create(mutation, approval.Summarize(operation.action, body))
+			record, err := approvalStore.Create(mutation, review)
 			if err != nil {
 				return toolJSONError("preview_error", err.Error()), nil
 			}
@@ -126,7 +227,7 @@ func makeNarrowMutationHandler(operation narrowOperation) server.ToolHandlerFunc
 				"confirmation_digest": record.ConfirmationDigest,
 				"expires_at":          record.ExpiresAt,
 				"review":              record.Review,
-				"next_step":           "After explicit human approval, call the same tool with confirm=true, this operation_id and confirmation_digest, and the exact same request object.",
+				"next_step":           "After explicit human approval, call the same tool with confirm=true, this operation_id and confirmation_digest, and the exact same request and preflight context.",
 			}), nil
 		}
 
@@ -135,13 +236,31 @@ func makeNarrowMutationHandler(operation narrowOperation) server.ToolHandlerFunc
 		if operationID == "" || digest == "" {
 			return toolJSONError("confirmation_required", "confirm=true requires operation_id and confirmation_digest from a preview call"), nil
 		}
-		_, permit, err := store.Consume(operationID, digest, mutation)
+		record, permit, err := approvalStore.Consume(operationID, digest, mutation)
 		if err != nil {
 			return toolJSONError("confirmation_rejected", err.Error()), nil
 		}
+		defer permit.Release()
+		persistOptions.OperationID = operationID
+		if persistOptions.PickupPreflight == "verified" {
+			persistOptions.PickupPreflightCutoff = record.Review.PickupCutoffTime
+			persistOptions.PickupPreflightAccessStart = record.Review.PickupAccessStart
+		}
+		alreadyComplete, beginErr := workflow.BeginMutation(ctx, operation.action, body, persistOptions)
+		if beginErr != nil {
+			_ = approvalStore.Complete(operationID, approval.StatusRejected, "local_state")
+			return toolJSONErrorFields("local_state", beginErr.Error(), map[string]any{"operation_id": operationID}), nil
+		}
+		if alreadyComplete != nil {
+			if completeErr := approvalStore.Complete(operationID, approval.StatusSucceeded, ""); completeErr != nil {
+				return toolJSONErrorFields("local_state_error", completeErr.Error(), map[string]any{"operation_id": operationID}), nil
+			}
+			return toolJSON(map[string]any{"status": "succeeded", "action": operation.action, "operation_id": operationID, "http_status": 200, "data": alreadyComplete}), nil
+		}
 
-		fedexClient.MutationPermit = permit
-		data, status, executeErr := executeNarrowOperation(fedexClient, operation, body)
+		operationClient := *fedexClient
+		operationClient.MutationPermit = permit
+		data, status, executeErr := executeNarrowOperation(&operationClient, operation, body)
 		if executeErr != nil {
 			completionStatus := approval.StatusRejected
 			errorClass := "fedex_rejected"
@@ -149,32 +268,33 @@ func makeNarrowMutationHandler(operation narrowOperation) server.ToolHandlerFunc
 			if errors.As(executeErr, &unknown) {
 				completionStatus = approval.StatusOutcomeUnknown
 				errorClass = "outcome_unknown"
+				workflow.PersistOutcomeUnknown(ctx, operation.action, body, persistOptions)
+			} else {
+				workflow.PersistRejected(ctx, operation.action, body, persistOptions)
 			}
-			if completeErr := store.Complete(operationID, completionStatus, errorClass); completeErr != nil {
-				return toolJSONErrorFields("local_state_error", fmt.Sprintf("remote operation failed and local completion record could not be updated: %v", completeErr), map[string]any{
-					"operation_id": operationID,
-					"http_status":  status,
-				}), nil
+			if completeErr := approvalStore.Complete(operationID, completionStatus, errorClass); completeErr != nil {
+				return toolJSONErrorFields("local_state_error", fmt.Sprintf("remote operation failed and local completion record could not be updated: %v", completeErr), map[string]any{"operation_id": operationID, "http_status": status}), nil
 			}
-			return toolJSONErrorFields(errorClass, mutationErrorMessage(errorClass, status), map[string]any{
-				"operation_id":     operationID,
-				"operation_status": completionStatus,
-				"http_status":      status,
-			}), nil
+			return toolJSONErrorFields(errorClass, mutationErrorMessage(errorClass, status), map[string]any{"operation_id": operationID, "operation_status": completionStatus, "http_status": status}), nil
 		}
-		if err := store.Complete(operationID, approval.StatusSucceeded, ""); err != nil {
-			return toolJSONErrorFields("local_state_error", "FedEx accepted the operation but its local completion record could not be updated; do not retry", map[string]any{
-				"operation_id": operationID,
-				"http_status":  status,
-			}), nil
+		result, persistErr := workflow.PersistSuccess(ctx, operation.action, body, data, persistOptions)
+		if persistErr != nil {
+			completionStatus := approval.StatusOutcomeUnknown
+			errorClass := "local_persistence"
+			if errors.Is(persistErr, workflow.ErrRemoteRejected) {
+				completionStatus = approval.StatusRejected
+				errorClass = "remote_rejected"
+				workflow.PersistRejected(ctx, operation.action, body, persistOptions)
+			} else {
+				workflow.PersistOutcomeUnknown(ctx, operation.action, body, persistOptions)
+			}
+			_ = approvalStore.Complete(operationID, completionStatus, errorClass)
+			return toolJSONErrorFields(errorClass, persistErr.Error(), map[string]any{"operation_id": operationID, "operation_status": completionStatus, "http_status": status}), nil
 		}
-		return toolJSON(map[string]any{
-			"status":       "succeeded",
-			"action":       operation.action,
-			"operation_id": operationID,
-			"http_status":  status,
-			"data":         summarizeMutationResponse(operation.action, decodeJSON(data)),
-		}), nil
+		if err := approvalStore.Complete(operationID, approval.StatusSucceeded, ""); err != nil {
+			return toolJSONErrorFields("local_state_error", "FedEx accepted the operation but its local completion record could not be updated; do not retry", map[string]any{"operation_id": operationID, "http_status": status}), nil
+		}
+		return toolJSON(map[string]any{"status": "succeeded", "action": operation.action, "operation_id": operationID, "http_status": status, "data": result}), nil
 	}
 }
 
@@ -198,6 +318,18 @@ func requestObject(request mcplib.CallToolRequest) (map[string]any, error) {
 	body, ok := value.(map[string]any)
 	if !ok || body == nil {
 		return nil, fmt.Errorf("request must be a JSON object")
+	}
+	return body, nil
+}
+
+func optionalObjectArgument(arguments map[string]any, name string) (map[string]any, error) {
+	value, ok := arguments[name]
+	if !ok || value == nil {
+		return nil, nil
+	}
+	body, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be a JSON object", name)
 	}
 	return body, nil
 }
