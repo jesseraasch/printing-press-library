@@ -76,6 +76,12 @@ func registerNarrowTools(s *server.MCPServer) {
 		if requestSchema, ok := tool.InputSchema.Properties["request"].(map[string]any); ok {
 			requestSchema["required"] = requestSchemaRequired(op.action)
 		}
+		if op.action == workflow.ActionSchedulePickup {
+			if availabilitySchema, ok := tool.InputSchema.Properties["availability_request"].(map[string]any); ok {
+				availabilitySchema["properties"] = requestSchemaProperties("pickup_availability")
+				availabilitySchema["required"] = requestSchemaRequired("pickup_availability")
+			}
+		}
 		s.AddTool(tool, handler)
 	}
 }
@@ -89,7 +95,7 @@ func requestSchemaRequired(action string) []string {
 	case "validate_shipment":
 		return []string{"accountNumber", "requestedShipment"}
 	case "pickup_availability":
-		return []string{"pickupAddress", "dispatchDate", "packageReadyTime", "customerCloseTime", "associatedAccountNumber", "carriers"}
+		return []string{"pickupAddress", "pickupRequestType", "carriers", "countryRelationship"}
 	case workflow.ActionCreateLabel:
 		return []string{"labelResponseOptions", "accountNumber", "requestedShipment"}
 	case workflow.ActionCancelShipment:
@@ -105,11 +111,11 @@ func requestSchemaRequired(action string) []string {
 
 func requestSchemaProperties(action string) map[string]any {
 	account := map[string]any{"type": "object", "properties": map[string]any{"value": map[string]any{"type": "string"}}, "required": []string{"value"}}
-	address := map[string]any{"type": "object", "properties": map[string]any{"streetLines": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "city": map[string]any{"type": "string"}, "stateOrProvinceCode": map[string]any{"type": "string"}, "postalCode": map[string]any{"type": "string"}, "countryCode": map[string]any{"type": "string"}}, "required": []string{"streetLines", "city", "postalCode", "countryCode"}}
+	address := map[string]any{"type": "object", "properties": map[string]any{"streetLines": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}}, "city": map[string]any{"type": "string"}, "stateOrProvinceCode": map[string]any{"type": "string"}, "postalCode": map[string]any{"type": "string"}, "countryCode": map[string]any{"type": "string"}}, "required": []string{"streetLines", "city", "postalCode", "countryCode"}}
 	contact := map[string]any{"type": "object", "properties": map[string]any{"personName": map[string]any{"type": "string"}, "companyName": map[string]any{"type": "string"}, "phoneNumber": map[string]any{"type": "string"}}, "required": []string{"phoneNumber"}}
 	party := map[string]any{"type": "object", "properties": map[string]any{"contact": contact, "address": address}, "required": []string{"contact", "address"}}
 	rateAddress := map[string]any{"type": "object", "properties": map[string]any{"postalCode": map[string]any{"type": "string"}, "countryCode": map[string]any{"type": "string"}}, "required": []string{"postalCode", "countryCode"}}
-	weight := map[string]any{"type": "object", "properties": map[string]any{"units": map[string]any{"type": "string"}, "value": map[string]any{"type": "number", "exclusiveMinimum": 0}}, "required": []string{"units", "value"}}
+	weight := map[string]any{"type": "object", "properties": map[string]any{"units": map[string]any{"type": "string", "enum": []string{"LB", "KG"}}, "value": map[string]any{"type": "number", "exclusiveMinimum": 0}}, "required": []string{"units", "value"}}
 	switch action {
 	case "get_rates":
 		return map[string]any{
@@ -119,10 +125,10 @@ func requestSchemaProperties(action string) map[string]any {
 				"recipient":  map[string]any{"type": "object", "properties": map[string]any{"address": rateAddress}, "required": []string{"address"}},
 				"pickupType": map[string]any{"type": "string"}, "serviceType": map[string]any{"type": "string"},
 				"rateRequestType":           map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}},
-				"requestedPackageLineItems": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object", "properties": map[string]any{"weight": weight}, "required": []string{"weight"}}},
+				"requestedPackageLineItems": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object", "properties": map[string]any{"weight": weight, "groupPackageCount": map[string]any{"type": "integer", "enum": []int{1}}}, "required": []string{"weight"}}},
 			}, "required": []string{"shipper", "recipient", "pickupType", "rateRequestType", "requestedPackageLineItems"}},
 			"rateRequestControlParameters": map[string]any{"type": "object"},
-			"carrierCodes":                 map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG"}}},
+			"carrierCodes":                 map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG"}}},
 		}
 	case "validate_address":
 		return map[string]any{
@@ -136,7 +142,8 @@ func requestSchemaProperties(action string) map[string]any {
 			"requestedShipment": map[string]any{"type": "object", "properties": map[string]any{
 				"shipper": party, "recipients": map[string]any{"type": "array", "minItems": 1, "maxItems": 1, "items": party},
 				"serviceType": map[string]any{"type": "string"}, "packagingType": map[string]any{"type": "string"},
-				"requestedPackageLineItems": map[string]any{"type": "array", "minItems": 1, "maxItems": 1, "items": map[string]any{"type": "object", "properties": map[string]any{"weight": weight, "groupPackageCount": map[string]any{"type": "integer", "enum": []int{1}}}, "required": []string{"weight"}}},
+				"totalPackageCount":         map[string]any{"type": "integer", "enum": []int{1}},
+				"requestedPackageLineItems": map[string]any{"type": "array", "minItems": 1, "maxItems": 1, "items": map[string]any{"type": "object", "properties": map[string]any{"weight": weight, "groupPackageCount": map[string]any{"type": "integer", "enum": []int{1}}, "sequenceNumber": map[string]any{"type": "integer", "enum": []int{1}}}, "required": []string{"weight"}}},
 			}, "required": []string{"shipper", "recipients", "serviceType", "packagingType", "requestedPackageLineItems"}},
 		}
 	case "pickup_availability":
@@ -145,12 +152,13 @@ func requestSchemaProperties(action string) map[string]any {
 			"dispatchDate":            map[string]any{"type": "string"},
 			"packageReadyTime":        map[string]any{"type": "string"},
 			"customerCloseTime":       map[string]any{"type": "string"},
-			"pickupRequestType":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"pickupRequestType":       map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"SAME_DAY", "FUTURE_DAY"}}},
 			"shipmentAttributes":      map[string]any{"type": "object"},
 			"numberOfBusinessDays":    map[string]any{"type": "integer", "minimum": 0},
-			"packageDetails":          map[string]any{"type": "object"},
-			"associatedAccountNumber": account,
+			"packageDetails":          map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "object"}},
+			"associatedAccountNumber": map[string]any{"type": "string"},
 			"carriers":                map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"FDXE", "FDXG"}}},
+			"countryRelationship":     map[string]any{"type": "string", "enum": []string{"DOMESTIC", "INTERNATIONAL"}},
 		}
 	case workflow.ActionCreateLabel:
 		return map[string]any{

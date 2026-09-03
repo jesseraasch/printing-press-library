@@ -21,8 +21,10 @@ func TestValidatePickupAvailabilityBinding(t *testing.T) {
 		},
 	}
 	availability := map[string]any{
-		"associatedAccountNumber": map[string]any{"value": "123456789"},
+		"associatedAccountNumber": "123456789",
 		"carriers":                []any{"FDXG"},
+		"pickupRequestType":       []any{"SAME_DAY"},
+		"countryRelationship":     "DOMESTIC",
 		"dispatchDate":            "2026-09-04",
 		"packageReadyTime":        "09:00",
 		"customerCloseTime":       "17:00",
@@ -42,11 +44,13 @@ func TestValidatePickupAvailabilityBinding(t *testing.T) {
 	}
 }
 
-func TestPickupAvailabilityEvidenceRejectsConflictingEntries(t *testing.T) {
-	if _, _, err := pickupAvailable([]byte(`{"options":[{"available":false},{"available":true}]}`)); err == nil {
-		t.Fatal("conflicting availability booleans accepted")
+func TestMatchingPickupAvailabilityRequiresOneCorrelatedOption(t *testing.T) {
+	response := []byte(`{"output":{"options":[{"carrier":"FDXG","available":true,"pickupDate":"2026-09-04","scheduleDay":"FRI","cutOffTime":"16:00"},{"carrier":"FDXG","available":false,"pickupDate":"2026-09-04","scheduleDay":"FRI","cutOffTime":"18:00"}]}}`)
+	if _, err := matchingPickupAvailability(response, "FDXG", "2026-09-04"); err == nil {
+		t.Fatal("multiple matching pickup availability options accepted")
 	}
-	if _, _, err := pickupWindowFields([]byte(`{"options":[{"cutoffTime":"16:00"},{"cutoffTime":"18:00"}]}`)); err == nil {
-		t.Fatal("multiple unmatched cutoff times accepted")
+	response = []byte(`{"output":{"options":[{"carrier":"FDXE","available":true,"pickupDate":"2026-09-04","scheduleDay":"FRI"}]}}`)
+	if _, err := matchingPickupAvailability(response, "FDXG", "2026-09-04"); err == nil {
+		t.Fatal("unmatched pickup availability option accepted")
 	}
 }

@@ -22,7 +22,7 @@ func TestSchedulePickupBindsPreflightAndPersistsLedger(t *testing.T) {
 		switch r.URL.Path {
 		case workflow.PickupAvailabilityPath:
 			availabilityCalls++
-			_, _ = w.Write([]byte(`{"output":{"available":true,"cutoffTime":"17:00","accessTime":"09:00"}}`))
+			_, _ = w.Write([]byte(`{"output":{"options":[{"carrier":"FDXG","available":true,"pickupDate":"2026-09-03","scheduleDay":"THU","cutOffTime":"17:00","accessTime":{"hours":1,"minutes":30}}]}}`))
 		case "/pickup/v1/pickups":
 			scheduleCalls++
 			_, _ = w.Write([]byte(`{"transactionId":"pickup-tx","output":{"pickupConfirmationCode":"PU123","scheduledDate":"2026-09-03","location":"GROUND"}}`))
@@ -41,8 +41,10 @@ func TestSchedulePickupBindsPreflightAndPersistsLedger(t *testing.T) {
 	request := validMCPSchedulePickupRequest()
 	address := request["originDetail"].(map[string]any)["pickupLocation"].(map[string]any)["address"]
 	availability := map[string]any{
-		"associatedAccountNumber": map[string]any{"value": "123456789"},
+		"associatedAccountNumber": "123456789",
 		"carriers":                []any{"FDXG"},
+		"pickupRequestType":       []any{"SAME_DAY"},
+		"countryRelationship":     "DOMESTIC",
 		"dispatchDate":            "2026-09-03",
 		"packageReadyTime":        "09:00",
 		"customerCloseTime":       "17:00:00",
@@ -81,7 +83,7 @@ func TestSchedulePickupBindsPreflightAndPersistsLedger(t *testing.T) {
 	}
 	pickup, err := ledger.GetPickupByOperationID(context.Background(), pending.OperationID)
 	_ = ledger.Close()
-	if err != nil || pickup == nil || pickup.Status != "scheduled" || pickup.ConfirmationNumber != "PU123" || pickup.PreflightStatus != "verified" || pickup.CutoffTime != "17:00" || pickup.AccessStartTime != "09:00" {
+	if err != nil || pickup == nil || pickup.Status != "scheduled" || pickup.ConfirmationNumber != "PU123" || pickup.PreflightStatus != "verified" || pickup.CutoffTime != "17:00" || pickup.AccessStartTime != "1h30m" {
 		t.Fatalf("pickup=%+v err=%v", pickup, err)
 	}
 }

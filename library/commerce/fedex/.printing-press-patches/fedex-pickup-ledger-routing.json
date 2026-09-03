@@ -4,7 +4,7 @@
   "applied_at": "2026-09-02",
   "base_run_id": "20260502-152509",
   "base_printing_press_version": "3.6.0",
-  "summary": "Require approval-bound pickup availability, persist recoverable pickup state, resolve cancellation identifiers locally, block unresolved equivalent mutations, and bind OAuth tokens to the selected FedEx environment.",
+  "summary": "Require approval-bound official pickup availability, correlate one carrier/date response option, persist recoverable pickup state, resolve cancellation identifiers locally, block unresolved equivalent mutations, and bind OAuth tokens to the selected FedEx environment.",
   "reason": "Pickup creation and cancellation are billable or state-changing operations whose identifiers must survive API gaps and whose production credentials must never be sent to sandbox endpoints or vice versa.",
   "files": [
     "README.md",
@@ -60,5 +60,5 @@
     "internal/workflow/transitions_test.go",
     "tools-manifest.json"
   ],
-  "validated_outcome": "Tests bind preflight account/carrier/date/time/address to the exact pickup, require a documented override otherwise, persist executing/scheduled/cancelled/outcome-unknown state, block unsafe equivalent requests with OS-backed execution leases, require separately confirmed reconciliation before retry, update the operational ledger before releasing approval state, reject HTTP redirect replay, resolve local identifiers, require a reason for legacy records, and reject access tokens from a different API origin."
+  "validated_outcome": "Tests bind the official preflight account/carrier/date/time/address request to the exact pickup, require exactly one matching output.options carrier/date result or a documented override, preserve structured access duration, persist executing/scheduled/cancelled/outcome-unknown state, block unsafe equivalent requests with OS-backed execution leases, require separately confirmed reconciliation before retry, update the operational ledger before releasing approval state, reject HTTP redirect replay, resolve local identifiers, require a reason for legacy records, and reject access tokens from a different API origin."
 }

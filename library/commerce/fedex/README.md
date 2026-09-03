@@ -135,10 +135,10 @@ fedex-pp-cli auth set-token '<short-lived-token>' --expires-in 55m --env sandbox
 
 ## Hardened label and pickup workflows
 
-- The four read-only MCP tools use operation-specific request schemas and server-side validation. Successful responses are reduced to allowlisted rate, resolved-address, shipment-validity, or pickup-window fields rather than returning the complete FedEx response.
+- The four read-only MCP tools use operation-specific nested request schemas plus server-side validation before any HTTP call. Shipment validation requires explicit FedEx success/failure alerts, and pickup availability preserves each official `output.options` entry (carrier, availability, date, cutoff, and structured access duration) while dropping addresses, messages, request echoes, and unrelated response fields.
 - `shipments create` and MCP `create_label` validate one shipper, one recipient, one package, service, account, `labelResponseOptions=LABEL`, and a PDF label request before creating an approval preview.
 - A confirmed label creation writes exactly one bounded, validated PDF under `$FEDEX_DATA_DIR/labels/` (or the default private data directory) and persists only operational shipment fields. Printing remains a separate operation.
-- `pickups create` and MCP `schedule_pickup` require a successful pickup-availability request during preview. When FedEx availability cannot be used, a nonblank `--availability-override-reason` / `availability_override_reason` is required and bound into the approval digest.
+- `pickups create` and MCP `schedule_pickup` require an official pickup-availability request during preview (`associatedAccountNumber` is a string; `pickupRequestType`, `carriers`, and `countryRelationship` are required). The response must contain exactly one option matching the scheduled carrier and date. When FedEx availability cannot be used, a nonblank `--availability-override-reason` / `availability_override_reason` is required and bound into the approval digest.
 - Pickup confirmation, carrier/date/location, cutoff/access times, transaction ID, request hash, and status are persisted in the private SQLite ledger.
 - Pickup cancellation resolves account, carrier, date, and Express location from a matching local confirmation. A pickup not present in the ledger requires complete explicit identifiers plus `--legacy-reason` / `legacy_reason`.
 - A transport error, 5xx response, oversized body, or malformed mutation success is recorded as `outcome_unknown`. Reconcile with FedEx before retrying.

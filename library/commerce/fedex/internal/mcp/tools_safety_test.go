@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -86,7 +87,7 @@ func TestAllToolsExposeTypedWorkflowSchemas(t *testing.T) {
 		"get_rates":           {"accountNumber", "requestedShipment"},
 		"validate_address":    {"addressesToValidate"},
 		"validate_shipment":   {"accountNumber", "requestedShipment"},
-		"pickup_availability": {"pickupAddress", "dispatchDate", "carriers"},
+		"pickup_availability": {"pickupAddress", "pickupRequestType", "carriers", "countryRelationship"},
 		"create_label":        {"accountNumber", "labelResponseOptions", "requestedShipment"},
 		"cancel_shipment":     {"accountNumber", "trackingNumber", "deletionControl"},
 		"schedule_pickup":     {"associatedAccountNumber", "originDetail", "totalWeight"},
@@ -96,7 +97,7 @@ func TestAllToolsExposeTypedWorkflowSchemas(t *testing.T) {
 		"get_rates":           {"accountNumber", "requestedShipment"},
 		"validate_address":    {"addressesToValidate"},
 		"validate_shipment":   {"accountNumber", "requestedShipment"},
-		"pickup_availability": {"pickupAddress", "dispatchDate", "packageReadyTime", "customerCloseTime", "associatedAccountNumber", "carriers"},
+		"pickup_availability": {"pickupAddress", "pickupRequestType", "carriers", "countryRelationship"},
 		"create_label":        {"labelResponseOptions", "accountNumber", "requestedShipment"},
 		"cancel_shipment":     {"accountNumber", "senderCountryCode", "trackingNumber", "deletionControl"},
 		"schedule_pickup":     {"associatedAccountNumber", "originDetail", "totalWeight", "packageCount", "carrierCode"},
@@ -133,23 +134,58 @@ func TestMCPMetadataMatchesRuntimeToolSurface(t *testing.T) {
 		Tools []struct {
 			Name       string `json:"name"`
 			Parameters struct {
-				Properties map[string]struct {
-					Properties map[string]any `json:"properties"`
-					Required   []string       `json:"required"`
-				} `json:"properties"`
+				Properties map[string]any `json:"properties"`
 			} `json:"parameters"`
 		} `json:"tools"`
 	}
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		t.Fatal(err)
 	}
+	s := server.NewMCPServer("fedex-test", "test")
+	RegisterTools(s)
 	names := make([]string, 0, len(manifest.Tools))
 	for _, tool := range manifest.Tools {
 		names = append(names, tool.Name)
 		if slices.Contains([]string{"get_rates", "validate_address", "validate_shipment", "pickup_availability"}, tool.Name) {
-			request := tool.Parameters.Properties["request"]
-			if len(request.Properties) == 0 || len(request.Required) == 0 {
-				t.Errorf("tools-manifest read tool %s must have typed properties and required fields", tool.Name)
+			manifestRequest, ok := tool.Parameters.Properties["request"].(map[string]any)
+			if !ok {
+				t.Fatalf("tools-manifest read tool %s request schema=%#v", tool.Name, tool.Parameters.Properties["request"])
+			}
+			runtimeRequest, ok := s.ListTools()[tool.Name].Tool.InputSchema.Properties["request"].(map[string]any)
+			if !ok {
+				t.Fatalf("runtime read tool %s request schema=%#v", tool.Name, s.ListTools()[tool.Name].Tool.InputSchema.Properties["request"])
+			}
+			runtimeJSON, err := json.Marshal(runtimeRequest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var normalizedRuntime map[string]any
+			if err := json.Unmarshal(runtimeJSON, &normalizedRuntime); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(manifestRequest, normalizedRuntime) {
+				t.Errorf("tools-manifest read tool %s request schema differs from runtime\nmanifest: %#v\nruntime: %#v", tool.Name, manifestRequest, normalizedRuntime)
+			}
+		}
+		if tool.Name == "schedule_pickup" {
+			manifestAvailability, ok := tool.Parameters.Properties["availability_request"].(map[string]any)
+			if !ok {
+				t.Fatalf("tools-manifest schedule_pickup availability_request schema=%#v", tool.Parameters.Properties["availability_request"])
+			}
+			runtimeAvailability, ok := s.ListTools()[tool.Name].Tool.InputSchema.Properties["availability_request"].(map[string]any)
+			if !ok {
+				t.Fatalf("runtime schedule_pickup availability_request schema=%#v", s.ListTools()[tool.Name].Tool.InputSchema.Properties["availability_request"])
+			}
+			runtimeJSON, err := json.Marshal(runtimeAvailability)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var normalizedRuntime map[string]any
+			if err := json.Unmarshal(runtimeJSON, &normalizedRuntime); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(manifestAvailability, normalizedRuntime) {
+				t.Errorf("tools-manifest schedule_pickup availability_request schema differs from runtime\nmanifest: %#v\nruntime: %#v", manifestAvailability, normalizedRuntime)
 			}
 		}
 	}

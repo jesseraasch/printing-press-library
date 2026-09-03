@@ -12,11 +12,15 @@
     "internal/mcp/narrow_read_test.go",
     "internal/mcp/tools.go",
     "internal/mcp/tools_safety_test.go",
+    "internal/workflow/preflight.go",
+    "internal/workflow/preflight_test.go",
+    "internal/cli/pickup_preflight_test.go",
+    "internal/mcp/pickup_schedule_workflow_test.go",
     "internal/mcp/code_orch_writebody_test.go",
     "internal/client/base_url_test.go",
     "internal/client/address_retry_test.go",
     ".printing-press.json",
     "tools-manifest.json"
   ],
-  "validated_outcome": "Unit and MCP protocol tests assert the exact eight-tool surface, typed required request schemas with server-side validation, and operation-specific read-only, destructive, idempotent, and open-world annotations; fedex_execute and broad CLI mirror tools are absent, metadata matches runtime registration, non-FedEx remote API origins are rejected before credentials can be sent, and responses expose only action-specific allowlisted rate, address-validation, shipment-validity, pickup-window, or mutation receipt fields."
+  "validated_outcome": "Unit and MCP protocol tests assert the exact eight-tool surface, deeply matched runtime/manifest request schemas, nested server-side validation before HTTP, and operation-specific read-only, destructive, idempotent, and open-world annotations; fedex_execute and broad CLI mirror tools are absent, non-FedEx remote API origins are rejected before credentials can be sent, shipment validity requires explicit alert evidence, pickup availability retains official per-option carrier/date/window evidence, and responses expose only action-specific allowlisted fields."
 }

@@ -24,7 +24,7 @@ func TestPickupPreflightRequiredAndExecutedDuringPreview(t *testing.T) {
 			t.Errorf("path=%s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"output":{"available":true,"cutoffTime":"17:00"}}`))
+		_, _ = w.Write([]byte(`{"output":{"options":[{"carrier":"FDXG","available":true,"pickupDate":"2026-09-04","scheduleDay":"FRI","cutOffTime":"17:00"}]}}`))
 	}))
 	defer server.Close()
 	fedexClient := client.New(&config.Config{
@@ -74,7 +74,7 @@ func TestPickupPreflightRejectsUnavailableAndShortOverride(t *testing.T) {
 	schedule, availability := pickupPreflightFixture()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"output":{"pickupAvailable":false}}`))
+		_, _ = w.Write([]byte(`{"output":{"options":[{"carrier":"FDXG","available":false,"pickupDate":"2026-09-04","scheduleDay":"FRI"}]}}`))
 	}))
 	defer server.Close()
 	fedexClient := client.New(&config.Config{
@@ -108,6 +108,6 @@ func pickupPreflightFixture() (map[string]any, string) {
 			},
 		},
 	}
-	availability := `{"associatedAccountNumber":{"value":"123456789"},"carriers":["FDXG"],"dispatchDate":"2026-09-04","packageReadyTime":"09:00","customerCloseTime":"17:00","pickupAddress":{"streetLines":["1 Test Way"],"city":"Austin","stateOrProvinceCode":"TX","postalCode":"78701","countryCode":"US"}}`
+	availability := `{"associatedAccountNumber":"123456789","carriers":["FDXG"],"pickupRequestType":["SAME_DAY"],"countryRelationship":"DOMESTIC","dispatchDate":"2026-09-04","packageReadyTime":"09:00","customerCloseTime":"17:00","pickupAddress":{"streetLines":["1 Test Way"],"city":"Austin","stateOrProvinceCode":"TX","postalCode":"78701","countryCode":"US"}}`
 	return schedule, availability
 }

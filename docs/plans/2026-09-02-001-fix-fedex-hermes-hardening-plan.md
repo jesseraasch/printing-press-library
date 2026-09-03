@@ -278,6 +278,7 @@ Not registered by default:
 
 - [x] Add a pickup table or operation subtype with confirmation number, carrier, scheduled date, Express location code, cutoff/access times, request hash, transaction ID, and status.
 - [x] Make pickup availability a required preflight for scheduling unless explicitly overridden with a documented reason.
+- [x] Validate the official availability request shape and bind exactly one response option matching the scheduled carrier and date.
 - [x] Persist the cancellation identifiers immediately after successful creation.
 - [x] Test Ground and Express response variants.
 

@@ -33,15 +33,23 @@ func ValidatePickupAvailabilityBinding(scheduleRequest, availabilityRequest map[
 	if err := ValidateRequest(ActionSchedulePickup, scheduleRequest); err != nil {
 		return err
 	}
-	account := strings.TrimSpace(nestedString(availabilityRequest, "associatedAccountNumber", "value"))
+	account := strings.TrimSpace(stringField(availabilityRequest, "associatedAccountNumber"))
 	wantAccount := strings.TrimSpace(nestedString(scheduleRequest, "associatedAccountNumber", "value"))
 	if account == "" || account != wantAccount {
-		return fmt.Errorf("availability associatedAccountNumber.value must match the pickup request")
+		return fmt.Errorf("availability associatedAccountNumber must match associatedAccountNumber.value in the pickup request")
 	}
 	carrier := strings.TrimSpace(stringField(scheduleRequest, "carrierCode"))
 	carriers := stringList(availabilityRequest["carriers"])
 	if len(carriers) != 1 || carriers[0] != carrier {
 		return fmt.Errorf("availability carriers must contain only pickup carrierCode %s", carrier)
+	}
+	requestTypes := stringList(availabilityRequest["pickupRequestType"])
+	if len(requestTypes) != 1 || (requestTypes[0] != "SAME_DAY" && requestTypes[0] != "FUTURE_DAY") {
+		return fmt.Errorf("availability pickupRequestType must contain exactly one supported request type")
+	}
+	countryRelationship := strings.TrimSpace(stringField(availabilityRequest, "countryRelationship"))
+	if countryRelationship != "DOMESTIC" && countryRelationship != "INTERNATIONAL" {
+		return fmt.Errorf("availability countryRelationship must be DOMESTIC or INTERNATIONAL")
 	}
 	ready := strings.TrimSpace(nestedString(scheduleRequest, "originDetail", "readyDateTimestamp"))
 	readyTime, err := time.Parse(time.RFC3339, ready)
@@ -100,20 +108,23 @@ func PreparePickupPreflight(client pickupAvailabilityClient, confirming bool, av
 	if err != nil {
 		return PickupPreflight{}, fmt.Errorf("pickup availability preflight: %w", err)
 	}
-	available, known, evidenceErr := pickupAvailable(data)
+	carriers := stringList(availabilityRequest["carriers"])
+	if len(carriers) != 1 {
+		return PickupPreflight{}, fmt.Errorf("pickup availability preflight requires exactly one carrier")
+	}
+	dispatchDate := strings.TrimSpace(stringField(availabilityRequest, "dispatchDate"))
+	if dispatchDate == "" {
+		return PickupPreflight{}, fmt.Errorf("pickup availability preflight requires dispatchDate")
+	}
+	option, evidenceErr := matchingPickupAvailability(data, carriers[0], dispatchDate)
 	if evidenceErr != nil {
 		return PickupPreflight{}, evidenceErr
 	}
-	if known && !available {
+	if !option.Available {
 		return PickupPreflight{}, fmt.Errorf("FedEx reported that pickup is unavailable for the requested window")
 	}
-	result.CutoffTime, result.AccessStart, err = pickupWindowFields(data)
-	if err != nil {
-		return PickupPreflight{}, err
-	}
-	if !known && result.CutoffTime == "" && result.AccessStart == "" {
-		return PickupPreflight{}, fmt.Errorf("FedEx availability response contained no positive availability or pickup-window evidence")
-	}
+	result.CutoffTime = option.CutoffTime
+	result.AccessStart = option.AccessTime
 	parts := make([]string, 0, 2)
 	if result.CutoffTime != "" {
 		parts = append(parts, "cutoff="+result.CutoffTime)
@@ -127,64 +138,53 @@ func PreparePickupPreflight(client pickupAvailabilityClient, confirming bool, av
 	return result, nil
 }
 
-func pickupAvailable(data []byte) (bool, bool, error) {
-	var value any
-	if json.Unmarshal(data, &value) != nil {
-		return false, false, fmt.Errorf("pickup availability response is not valid JSON")
+type pickupAvailabilityOption struct {
+	Available  bool
+	CutoffTime string
+	AccessTime string
+}
+
+func matchingPickupAvailability(data []byte, carrier, dispatchDate string) (pickupAvailabilityOption, error) {
+	type duration struct {
+		Hours   int `json:"hours"`
+		Minutes int `json:"minutes"`
 	}
-	var seenTrue, seenFalse bool
-	walkJSON(value, func(key string, child any) {
-		switch strings.ToLower(key) {
-		case "available", "pickupavailable", "isavailable":
-			if flag, ok := child.(bool); ok {
-				seenTrue = seenTrue || flag
-				seenFalse = seenFalse || !flag
+	var response struct {
+		Output struct {
+			Options []struct {
+				Carrier    string `json:"carrier"`
+				Available  *bool  `json:"available"`
+				PickupDate string `json:"pickupDate"`
+
+				CutoffTime string    `json:"cutOffTime"`
+				AccessTime *duration `json:"accessTime"`
+			} `json:"options"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return pickupAvailabilityOption{}, fmt.Errorf("pickup availability response is not valid JSON")
+	}
+	matches := make([]pickupAvailabilityOption, 0, 1)
+	for _, option := range response.Output.Options {
+		if strings.TrimSpace(option.Carrier) != carrier || strings.TrimSpace(option.PickupDate) != dispatchDate {
+			continue
+		}
+		if option.Available == nil {
+			return pickupAvailabilityOption{}, fmt.Errorf("matching pickup availability option omitted availability")
+		}
+		accessTime := ""
+		if option.AccessTime != nil {
+			if option.AccessTime.Hours < 0 || option.AccessTime.Minutes < 0 || option.AccessTime.Minutes > 59 {
+				return pickupAvailabilityOption{}, fmt.Errorf("matching pickup availability option contained an invalid accessTime")
 			}
+			accessTime = fmt.Sprintf("%dh%02dm", option.AccessTime.Hours, option.AccessTime.Minutes)
 		}
-	})
-	if seenTrue && seenFalse {
-		return false, false, fmt.Errorf("pickup availability response contains conflicting availability results")
+		matches = append(matches, pickupAvailabilityOption{Available: *option.Available, CutoffTime: strings.TrimSpace(option.CutoffTime), AccessTime: accessTime})
 	}
-	return seenTrue, seenTrue || seenFalse, nil
-}
-
-func pickupWindowFields(data []byte) (string, string, error) {
-	var value any
-	if json.Unmarshal(data, &value) != nil {
-		return "", "", fmt.Errorf("pickup availability response is not valid JSON")
+	if len(matches) != 1 {
+		return pickupAvailabilityOption{}, fmt.Errorf("FedEx availability response must contain exactly one option matching carrier %s and date %s", carrier, dispatchDate)
 	}
-	cutoffs := map[string]struct{}{}
-	accesses := map[string]struct{}{}
-	walkJSON(value, func(key string, child any) {
-		text, ok := child.(string)
-		if !ok || strings.TrimSpace(text) == "" {
-			return
-		}
-		switch strings.ToLower(key) {
-		case "cutofftime", "cutoff":
-			cutoffs[strings.TrimSpace(text)] = struct{}{}
-		case "accesstime", "accessstarttime":
-			accesses[strings.TrimSpace(text)] = struct{}{}
-		}
-	})
-	if len(cutoffs) > 1 || len(accesses) > 1 {
-		return "", "", fmt.Errorf("pickup availability response contains multiple unmatched pickup windows")
-	}
-	return onlyString(cutoffs), onlyString(accesses), nil
-}
-
-func walkJSON(value any, visit func(string, any)) {
-	switch typed := value.(type) {
-	case map[string]any:
-		for key, child := range typed {
-			visit(key, child)
-			walkJSON(child, visit)
-		}
-	case []any:
-		for _, child := range typed {
-			walkJSON(child, visit)
-		}
-	}
+	return matches[0], nil
 }
 
 func nestedString(value map[string]any, path ...string) string {
@@ -228,11 +228,4 @@ func stringList(value any) []string {
 		}
 	}
 	return result
-}
-
-func onlyString(values map[string]struct{}) string {
-	for value := range values {
-		return value
-	}
-	return ""
 }
